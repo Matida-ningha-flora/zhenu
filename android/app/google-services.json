@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "741677905714",
+    "project_id": "zhenu-f0838",
+    "storage_bucket": "zhenu-f0838.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:741677905714:android:78f9e20a5ab6786136492b",
+        "android_client_info": {
+          "package_name": "com.example.zhendu_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCvPdvBsnlCLDidzLbNvk_UyTmctDbd3oE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:741677905714:android:17787f6820dd6ed436492b",
+        "android_client_info": {
+          "package_name": "com.example.zhenu_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCvPdvBsnlCLDidzLbNvk_UyTmctDbd3oE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
