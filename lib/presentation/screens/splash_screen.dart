@@ -4,6 +4,7 @@ import '../../core/constants/app_colors.dart';
 import '../../data/services/firebase_auth_service.dart';
 import 'onboarding_screen.dart';
 import 'user_dashboard.dart';
+import 'admin_dashboard.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -57,10 +58,13 @@ class _SplashScreenState extends State<SplashScreen>
       if (mounted) {
         Widget nextScreen;
         if (user != null) {
-          nextScreen = UserDashboard(
-            role: user['role'] ?? 'normal',
-            email: user['email'] ?? '',
-          );
+          final String userRole = user['role'] ?? 'normal';
+          nextScreen = userRole == 'admin'
+              ? AdminDashboard(email: user['email'] ?? '')
+              : UserDashboard(
+                  role: userRole,
+                  email: user['email'] ?? '',
+                );
         } else {
           nextScreen = const OnboardingScreen();
         }

@@ -31,7 +31,11 @@ class _UserDashboardState extends State<UserDashboard> {
     _screens = [
       TranslatorScreen(role: widget.role),
       const DictionaryScreen(),
-      if (isDeaf) const EmergencyScreen() else const LearningScreen(),
+      if (isDeaf) ...[
+        const EmergencyScreen(),
+        const LearningScreen(),
+      ] else
+        const LearningScreen(),
       ProfileScreen(role: widget.role, email: widget.email),
     ];
   }
@@ -55,7 +59,7 @@ class _UserDashboardState extends State<UserDashboard> {
         ),
         label: 'Dictionnaire',
       ),
-      if (isDeaf)
+      if (isDeaf) ...[
         NavigationDestination(
           icon: Container(
             padding: const EdgeInsets.all(6),
@@ -70,8 +74,16 @@ class _UserDashboardState extends State<UserDashboard> {
             ),
           ),
           label: 'Urgence',
-        )
-      else
+        ),
+        NavigationDestination(
+          icon: Icon(
+            Icons.school_rounded,
+            color: _currentIndex == 3 ? AppColors.primary : Colors.grey.shade600,
+            size: 22,
+          ),
+          label: 'Apprentissage',
+        ),
+      ] else
         NavigationDestination(
           icon: Icon(
             Icons.school_rounded,
@@ -83,7 +95,7 @@ class _UserDashboardState extends State<UserDashboard> {
       NavigationDestination(
         icon: Icon(
           Icons.person_rounded,
-          color: _currentIndex == 3 ? AppColors.primary : Colors.grey.shade600,
+          color: _currentIndex == (isDeaf ? 4 : 3) ? AppColors.primary : Colors.grey.shade600,
           size: 22,
         ),
         label: 'Profil',

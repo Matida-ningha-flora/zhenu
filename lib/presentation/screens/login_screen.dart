@@ -5,6 +5,7 @@ import '../../core/constants/app_colors.dart';
 import '../../data/services/firebase_auth_service.dart';
 import 'register_screen.dart';
 import 'user_dashboard.dart';
+import 'admin_dashboard.dart';
 
 class LoginScreen extends StatefulWidget {
    const LoginScreen({super.key});
@@ -83,21 +84,26 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
 
        setState(() => _isLoading = false);
 
-       if (mounted && user != null) {
-         Navigator.pushReplacement(
-           context,
-           PageRouteBuilder(
-             pageBuilder: (context, animation, secondaryAnimation) => UserDashboard(
-               role: user['role'] ?? 'normal',
-               email: user['email'] ?? '',
-             ),
-             transitionsBuilder: (context, animation, secondaryAnimation, child) {
-               return FadeTransition(opacity: animation, child: child);
-             },
-             transitionDuration: const Duration(milliseconds: 800),
-           ),
-         );
-       }
+        if (mounted && user != null) {
+          final String userRole = user['role'] ?? 'normal';
+          final Widget targetScreen = userRole == 'admin'
+              ? AdminDashboard(email: user['email'] ?? '')
+              : UserDashboard(
+                  role: userRole,
+                  email: user['email'] ?? '',
+                );
+
+          Navigator.pushReplacement(
+            context,
+            PageRouteBuilder(
+              pageBuilder: (context, animation, secondaryAnimation) => targetScreen,
+              transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                return FadeTransition(opacity: animation, child: child);
+              },
+              transitionDuration: const Duration(milliseconds: 800),
+            ),
+          );
+        }
      } catch (e) {
        setState(() => _isLoading = false);
        if (mounted) {

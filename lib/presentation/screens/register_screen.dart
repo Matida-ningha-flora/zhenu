@@ -5,6 +5,7 @@ import '../../core/constants/app_colors.dart';
 import '../../data/services/firebase_auth_service.dart';
 import 'user_dashboard.dart';
 import 'login_screen.dart';
+import 'admin_dashboard.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -122,13 +123,18 @@ class _RegisterScreenState extends State<RegisterScreen> with SingleTickerProvid
           );
         }
 
+        final String userRole = user['role'] ?? 'normal';
+        final Widget targetScreen = userRole == 'admin'
+            ? AdminDashboard(email: user['email'] ?? '')
+            : UserDashboard(
+                role: userRole,
+                email: user['email'] ?? '',
+              );
+
         Navigator.pushReplacement(
           context,
           PageRouteBuilder(
-            pageBuilder: (context, animation, secondaryAnimation) => UserDashboard(
-              role: user['role'] ?? 'normal',
-              email: user['email'] ?? '',
-            ),
+            pageBuilder: (context, animation, secondaryAnimation) => targetScreen,
             transitionsBuilder: (context, animation, secondaryAnimation, child) {
               return FadeTransition(opacity: animation, child: child);
             },

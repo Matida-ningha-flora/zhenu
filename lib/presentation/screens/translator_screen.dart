@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:camera/camera.dart';
 import '../../core/constants/app_colors.dart';
 import '../widgets/hand_skeleton_painter.dart';
 
@@ -19,13 +20,34 @@ class TranslatorScreen extends StatefulWidget {
 
 class _TranslatorScreenState extends State<TranslatorScreen>
     with SingleTickerProviderStateMixin {
-  late int _translationMode; // 0 = Signes ➔ Voix, 1 = Voix/Texte ➔ Signes, 2 = Sous-titres
+  late int _translationMode; // 0 = Signes ➔ Voix, 1 = Voix/Texte ➔ Signes, 2 = Sous-titres, 3 = Salon Direct
   bool _isCameraActive = false;
   bool _isCameraStarting = false;
   bool _isScanning = false;
   bool _isConnectedWebSocket = false;
   String _translationResult = '';
   String _status = 'idle'; // 'idle', 'scanning', 'success'
+
+  // Caméra physique
+  CameraController? _cameraController;
+  List<CameraDescription>? _cameras;
+  bool _isCameraInitialized = false;
+
+  // Salon en Direct
+  bool _isConnectedToRoom = false;
+  String _selectedRoom = 'Salon LSC - Famille';
+  final List<Map<String, dynamic>> _roomMessages = [];
+  final List<String> _availableRooms = [
+    'Salon LSC - Famille',
+    'Discussion Médicale (Dr. Diallo)',
+    'Cours de Soutien Scolaire LSC'
+  ];
+  final TextEditingController _chatTextController = TextEditingController();
+  Timer? _chatSimulationTimer;
+  String _activeAvatarGesture = '';
+  bool _isAvatarSigning = false;
+  Timer? _avatarGestureTimer;
+  bool _isMicrophoneRecording = false;
   
   // Console de logs WebSocket
   List<String> _wsLogs = [
@@ -99,7 +121,81 @@ class _TranslatorScreenState extends State<TranslatorScreen>
     _wsLogTimer?.cancel();
     _subtitlesTimer?.cancel();
     _textInputController.dispose();
+    _cameraController?.dispose();
+    _chatSimulationTimer?.cancel();
+    _avatarGestureTimer?.cancel();
+    _chatTextController.dispose();
     super.dispose();
+  }
+
+  Future<void> _initializeCamera() async {
+    setState(() {
+      _isCameraStarting = true;
+    });
+    try {
+      _cameras = await availableCameras();
+      if (_cameras != null && _cameras!.isNotEmpty) {
+        final camera = _cameras!.firstWhere(
+          (cam) => cam.lensDirection == CameraLensDirection.front,
+          orElse: () => _cameras!.first,
+        );
+        _cameraController = CameraController(
+          camera,
+          ResolutionPreset.medium,
+          enableAudio: false,
+        );
+        await _cameraController!.initialize();
+        if (mounted) {
+          setState(() {
+            _isCameraInitialized = true;
+            _isCameraActive = true;
+            _isCameraStarting = false;
+          });
+        }
+      } else {
+        throw Exception("Aucune caméra disponible.");
+      }
+    } catch (e) {
+      print("Erreur initialisation caméra physique: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.warning_rounded, color: Colors.white),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    "Impossible d'activer la caméra physique ($e). Mode simulé.",
+                    style: GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 11),
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: AppColors.warning,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          ),
+        );
+        setState(() {
+          _isCameraActive = true;
+          _isCameraInitialized = false;
+          _isCameraStarting = false;
+        });
+      }
+    }
+  }
+
+  void _deactivateCamera() {
+    _cameraController?.dispose();
+    _cameraController = null;
+    setState(() {
+      _isCameraActive = false;
+      _isCameraInitialized = false;
+      _isScanning = false;
+      _status = 'idle';
+      _simulatedScanTimer?.cancel();
+    });
   }
 
   void _startWsLogSimulation() {
@@ -379,6 +475,8 @@ class _TranslatorScreenState extends State<TranslatorScreen>
       titleText = 'Entendant ➔ Sourd';
     } else if (_translationMode == 2) {
       titleText = 'Sous-titrage Ambiant';
+    } else if (_translationMode == 3) {
+      titleText = 'Salon de Discussion Direct';
     }
 
     final bool isDeaf = widget.role == 'sourd';
@@ -408,9 +506,9 @@ class _TranslatorScreenState extends State<TranslatorScreen>
       body: SafeArea(
         child: Column(
           children: [
-            // Sélecteur de mode conditionnel
+            // Sélecteur de mode conditionnel (3 choix)
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
               child: Container(
                 height: 56,
                 decoration: BoxDecoration(
@@ -420,7 +518,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                 child: Row(
                   children: isDeaf
                       ? [
-                          // Sourd : Signes ➔ Voix (0) et Sous-titrage (2)
+                          // Sourd : Signes ➔ Voix (0), Sous-titrage (2), Salon Direct (3)
                           Expanded(
                             child: GestureDetector(
                               onTap: () => setState(() {
@@ -448,7 +546,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                                   'Signes ➔ Voix',
                                   style: GoogleFonts.poppins(
                                     fontWeight: FontWeight.bold,
-                                    fontSize: 11,
+                                    fontSize: 10.5,
                                     color: _translationMode == 0 ? Colors.white : Colors.grey.shade700,
                                   ),
                                 ),
@@ -483,8 +581,43 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                                   'Sous-titrage',
                                   style: GoogleFonts.poppins(
                                     fontWeight: FontWeight.bold,
-                                    fontSize: 11,
+                                    fontSize: 10.5,
                                     color: _translationMode == 2 ? Colors.white : Colors.grey.shade700,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: GestureDetector(
+                              onTap: () => setState(() {
+                                _translationMode = 3;
+                                _translationResult = '';
+                                _status = 'idle';
+                                _isScanning = false;
+                                _simulatedScanTimer?.cancel();
+                              }),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  gradient: _translationMode == 3 ? AppColors.primaryGradient : null,
+                                  borderRadius: BorderRadius.circular(28),
+                                  boxShadow: _translationMode == 3
+                                      ? [
+                                          BoxShadow(
+                                            color: AppColors.primary.withOpacity(0.25),
+                                            blurRadius: 10,
+                                            offset: const Offset(0, 4),
+                                          )
+                                        ]
+                                      : null,
+                                ),
+                                alignment: Alignment.center,
+                                child: Text(
+                                  'Salon Direct',
+                                  style: GoogleFonts.poppins(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 10.5,
+                                    color: _translationMode == 3 ? Colors.white : Colors.grey.shade700,
                                   ),
                                 ),
                               ),
@@ -492,7 +625,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                           ),
                         ]
                       : [
-                          // Entendant : Voix ➔ Signes (1) et Signes ➔ Voix (0)
+                          // Entendant : Voix ➔ Signes (1), Signes ➔ Voix (0), Salon Direct (3)
                           Expanded(
                             child: GestureDetector(
                               onTap: () => setState(() {
@@ -521,7 +654,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                                   'Voix ➔ Signes',
                                   style: GoogleFonts.poppins(
                                     fontWeight: FontWeight.bold,
-                                    fontSize: 11,
+                                    fontSize: 10.5,
                                     color: _translationMode == 1 ? Colors.white : Colors.grey.shade700,
                                   ),
                                 ),
@@ -555,8 +688,43 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                                   'Signes ➔ Voix',
                                   style: GoogleFonts.poppins(
                                     fontWeight: FontWeight.bold,
-                                    fontSize: 11,
+                                    fontSize: 10.5,
                                     color: _translationMode == 0 ? Colors.white : Colors.grey.shade700,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: GestureDetector(
+                              onTap: () => setState(() {
+                                _translationMode = 3;
+                                _translationResult = '';
+                                _status = 'idle';
+                                _isScanning = false;
+                                _simulatedScanTimer?.cancel();
+                              }),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  gradient: _translationMode == 3 ? AppColors.primaryGradient : null,
+                                  borderRadius: BorderRadius.circular(28),
+                                  boxShadow: _translationMode == 3
+                                      ? [
+                                          BoxShadow(
+                                            color: AppColors.primary.withOpacity(0.25),
+                                            blurRadius: 10,
+                                            offset: const Offset(0, 4),
+                                          )
+                                        ]
+                                      : null,
+                                ),
+                                alignment: Alignment.center,
+                                child: Text(
+                                  'Salon Direct',
+                                  style: GoogleFonts.poppins(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 10.5,
+                                    color: _translationMode == 3 ? Colors.white : Colors.grey.shade700,
                                   ),
                                 ),
                               ),
@@ -571,7 +739,11 @@ class _TranslatorScreenState extends State<TranslatorScreen>
             Expanded(
               child: _translationMode == 0
                   ? _buildDeafToHearing()
-                  : (_translationMode == 1 ? _buildHearingToDeaf() : _buildAmbientSubtitles()),
+                  : (_translationMode == 1
+                      ? _buildHearingToDeaf()
+                      : (_translationMode == 2
+                          ? _buildAmbientSubtitles()
+                          : _buildLiveChatRoom())),
             ),
           ],
         ),
@@ -605,15 +777,18 @@ class _TranslatorScreenState extends State<TranslatorScreen>
             child: Stack(
               fit: StackFit.expand,
               children: [
-                // Caméra Mock en arrière plan (visuel futuriste noir/violet sombre)
-                Container(
-                  decoration: const BoxDecoration(
-                    gradient: RadialGradient(
-                      colors: [Color(0xFF1E1B4B), Color(0xFF090514)],
-                      radius: 1.2,
+                // Caméra physique réelle si disponible, sinon gradient
+                if (_isCameraInitialized && _cameraController != null)
+                  CameraPreview(_cameraController!)
+                else
+                  Container(
+                    decoration: const BoxDecoration(
+                      gradient: RadialGradient(
+                        colors: [Color(0xFF1E1B4B), Color(0xFF090514)],
+                        radius: 1.2,
+                      ),
                     ),
                   ),
-                ),
                 
                 if (!_isCameraActive)
                   Center(
@@ -685,19 +860,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                             ),
                             const SizedBox(height: 24),
                             ElevatedButton.icon(
-                              onPressed: () {
-                                setState(() {
-                                  _isCameraStarting = true;
-                                });
-                                Timer(const Duration(milliseconds: 1500), () {
-                                  if (mounted) {
-                                    setState(() {
-                                      _isCameraStarting = false;
-                                      _isCameraActive = true;
-                                    });
-                                  }
-                                });
-                              },
+                              onPressed: _initializeCamera,
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: AppColors.secondary,
                                 padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
@@ -814,14 +977,7 @@ class _TranslatorScreenState extends State<TranslatorScreen>
                                 padding: const EdgeInsets.all(8),
                                 minimumSize: Size.zero,
                               ),
-                              onPressed: () {
-                                setState(() {
-                                  _isCameraActive = false;
-                                  _isScanning = false;
-                                  _status = 'idle';
-                                  _simulatedScanTimer?.cancel();
-                                });
-                              },
+                              onPressed: _deactivateCamera,
                               tooltip: 'Désactiver la caméra',
                             ),
                           ],
@@ -1579,6 +1735,718 @@ class _TranslatorScreenState extends State<TranslatorScreen>
         );
       },
     );
+  }
+
+  // --- METHODES SALON DE DISCUSSION EN DIRECT ---
+
+  Widget _buildLiveChatRoom() {
+    if (!_isConnectedToRoom) {
+      return _buildRoomSelectionView();
+    }
+    return _buildActiveChatRoomView();
+  }
+
+  Widget _buildRoomSelectionView() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: AppColors.primary.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: AppColors.primary.withOpacity(0.12)),
+            ),
+            child: Column(
+              children: [
+                const Icon(Icons.hub_rounded, color: AppColors.primary, size: 36),
+                const SizedBox(height: 12),
+                Text(
+                  'SALONS DE DISCUSSION DIRECTE',
+                  style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.bold, color: AppColors.primary),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Discutez en temps réel avec une ou plusieurs personnes. Traduction voix-signe et signe-voix intégrée.',
+                  style: GoogleFonts.inter(fontSize: 12, color: Colors.grey.shade600, height: 1.4),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 28),
+          
+          Text(
+            'REJOINDRE UN SALON',
+            style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey.shade400, letterSpacing: 1.5),
+          ),
+          const SizedBox(height: 12),
+          
+          Card(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'Choisissez votre salon :',
+                    style: GoogleFonts.poppins(fontSize: 12.5, fontWeight: FontWeight.bold, color: Colors.grey.shade800),
+                  ),
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    decoration: BoxDecoration(
+                      color: AppColors.background,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        value: _selectedRoom,
+                        isExpanded: true,
+                        icon: const Icon(Icons.arrow_drop_down_rounded, color: AppColors.primary),
+                        onChanged: (String? val) {
+                          if (val != null) {
+                            setState(() {
+                              _selectedRoom = val;
+                            });
+                          }
+                        },
+                        items: _availableRooms.map((room) {
+                          return DropdownMenuItem<String>(
+                            value: room,
+                            child: Text(room, style: GoogleFonts.poppins(fontSize: 13, fontWeight: FontWeight.w500)),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  ElevatedButton(
+                    onPressed: _connectToRoom,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                    ),
+                    child: Text(
+                      'SE CONNECTER AU SALON',
+                      style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 13, letterSpacing: 1),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _connectToRoom() {
+    setState(() {
+      _isConnectedToRoom = true;
+      _roomMessages.clear();
+      _roomMessages.add({
+        'sender': 'Système',
+        'text': 'Vous avez rejoint le "${_selectedRoom}". Connexion chiffrée établie.',
+        'isSystem': true,
+      });
+    });
+
+    _chatSimulationTimer?.cancel();
+    int step = 0;
+    _chatSimulationTimer = Timer.periodic(const Duration(seconds: 8), (timer) {
+      if (!mounted || !_isConnectedToRoom) {
+        timer.cancel();
+        return;
+      }
+      setState(() {
+        if (widget.role == 'sourd') {
+          if (step == 0) {
+            _receiveChatMessage('Maman (Entendant)', 'Coucou ! Comment vas-tu ? Tu as mangé ?');
+            step++;
+          } else if (step == 1) {
+            _receiveChatMessage('Maman (Entendant)', 'Je viens de finir mon travail. Dis-moi si tu as besoin d\'AIDE.');
+            step++;
+          } else {
+            _receiveChatMessage('Maman (Entendant)', 'D\'accord mon chéri. Prends soin de toi. MERCI.');
+            timer.cancel();
+          }
+        } else {
+          if (step == 0) {
+            _receiveChatMessage('Jean (Sourd)', '[Geste] BONJOUR');
+            _triggerTTS('Bonjour');
+            step++;
+          } else if (step == 1) {
+            _receiveChatMessage('Jean (Sourd)', '[Geste] AIDE');
+            _triggerTTS('Aide');
+            step++;
+          } else {
+            _receiveChatMessage('Jean (Sourd)', '[Geste] MERCI');
+            _triggerTTS('Merci');
+            timer.cancel();
+          }
+        }
+      });
+    });
+  }
+
+  void _receiveChatMessage(String sender, String text) {
+    setState(() {
+      _roomMessages.add({
+        'sender': sender,
+        'text': text,
+        'isSystem': false,
+        'isMe': false,
+      });
+
+      if (widget.role == 'sourd') {
+        String cleanText = text.toUpperCase();
+        String keyword = '';
+        if (cleanText.contains('BONJOUR')) {
+          keyword = 'BONJOUR';
+        } else if (cleanText.contains('MERCI')) {
+          keyword = 'MERCI';
+        } else if (cleanText.contains('URGENCE')) {
+          keyword = 'URGENCE';
+        } else if (cleanText.contains('AIDE')) {
+          keyword = 'AIDE';
+        }
+
+        if (keyword.isNotEmpty) {
+          _activeAvatarGesture = keyword;
+          _isAvatarSigning = true;
+          _avatarGestureTimer?.cancel();
+          _avatarGestureTimer = Timer(const Duration(seconds: 4), () {
+            if (mounted) {
+              setState(() {
+                _isAvatarSigning = false;
+                _activeAvatarGesture = '';
+              });
+            }
+          });
+        }
+      }
+    });
+  }
+
+  void _disconnectFromRoom() {
+    _chatSimulationTimer?.cancel();
+    _avatarGestureTimer?.cancel();
+    _deactivateCamera();
+    setState(() {
+      _isConnectedToRoom = false;
+      _roomMessages.clear();
+      _isMicrophoneRecording = false;
+      _isAvatarSigning = false;
+      _activeAvatarGesture = '';
+    });
+  }
+
+  void _sendChatMessage(String text) {
+    if (text.trim().isEmpty) return;
+    setState(() {
+      _roomMessages.add({
+        'sender': widget.role == 'sourd' ? 'Moi (Sourd)' : 'Moi (Entendant)',
+        'text': text,
+        'isSystem': false,
+        'isMe': true,
+      });
+    });
+  }
+
+  Widget _buildActiveChatRoomView() {
+    final bool isDeaf = widget.role == 'sourd';
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border(bottom: BorderSide(color: Colors.grey.shade100)),
+          ),
+          child: Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.arrow_back_rounded, color: AppColors.primary),
+                onPressed: _disconnectFromRoom,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _selectedRoom,
+                      style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black87),
+                    ),
+                    Row(
+                      children: [
+                        Container(
+                          width: 8, height: 8,
+                          decoration: const BoxDecoration(color: AppColors.success, shape: BoxShape.circle),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          isDeaf
+                              ? 'Connecté avec Maman (Entendant)'
+                              : 'Connecté avec Jean (Sourd)',
+                          style: GoogleFonts.inter(fontSize: 10.5, color: Colors.grey.shade500, fontWeight: FontWeight.w500),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.logout_rounded, color: AppColors.error, size: 20),
+                onPressed: _disconnectFromRoom,
+                tooltip: 'Quitter le salon',
+              ),
+            ],
+          ),
+        ),
+
+        if (isDeaf) _buildAvatarInterpreterCard(),
+
+        Expanded(
+          child: Stack(
+            children: [
+              ListView.builder(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 140),
+                itemCount: _roomMessages.length,
+                itemBuilder: (context, idx) {
+                  final msg = _roomMessages[idx];
+                  final bool isSystem = msg['isSystem'] ?? false;
+                  if (isSystem) {
+                    return Center(
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(vertical: 8),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade200,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          msg['text']!,
+                          style: GoogleFonts.shareTechMono(fontSize: 10, color: Colors.grey.shade600),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    );
+                  }
+
+                  final bool isMe = msg['isMe'] ?? false;
+                  final text = msg['text']!;
+                  final bool isGesture = text.startsWith('[Geste]');
+
+                  return Align(
+                    alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+                    child: Container(
+                      margin: const EdgeInsets.symmetric(vertical: 4),
+                      padding: const EdgeInsets.all(14),
+                      constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
+                      decoration: BoxDecoration(
+                        color: isMe
+                            ? AppColors.primary
+                            : (isGesture ? AppColors.secondary.withOpacity(0.12) : Colors.white),
+                        borderRadius: BorderRadius.only(
+                          topLeft: const Radius.circular(20),
+                          topRight: const Radius.circular(20),
+                          bottomLeft: Radius.circular(isMe ? 20 : 4),
+                          bottomRight: Radius.circular(isMe ? 4 : 20),
+                        ),
+                        border: isMe ? null : Border.all(color: Colors.grey.shade100),
+                        boxShadow: [
+                          BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 8),
+                        ],
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            msg['sender']!,
+                            style: GoogleFonts.poppins(
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.bold,
+                              color: isMe
+                                  ? Colors.white70
+                                  : (isGesture ? AppColors.secondaryDark : Colors.grey.shade500),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          if (isGesture)
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  _getGestureEmoji(text),
+                                  style: const TextStyle(fontSize: 22),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  text.replaceAll('[Geste] ', ''),
+                                  style: GoogleFonts.poppins(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 14.5,
+                                    color: isMe ? Colors.white : AppColors.secondaryDark,
+                                  ),
+                                ),
+                              ],
+                            )
+                          else
+                            Text(
+                              text,
+                              style: GoogleFonts.inter(
+                                fontSize: 13.5,
+                                color: isMe ? Colors.white : Colors.black87,
+                                height: 1.4,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+
+              if (isDeaf)
+                Positioned(
+                  bottom: 16,
+                  right: 16,
+                  child: GestureDetector(
+                    onTap: () {
+                      if (_isCameraActive) {
+                        _deactivateCamera();
+                      } else {
+                        _initializeCamera();
+                      }
+                    },
+                    child: Container(
+                      width: 90,
+                      height: 120,
+                      decoration: BoxDecoration(
+                        color: Colors.black87,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: _isCameraActive ? AppColors.secondary : Colors.white,
+                          width: 2,
+                        ),
+                        boxShadow: [
+                          BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 10),
+                        ],
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          if (_isCameraActive && _isCameraInitialized && _cameraController != null)
+                            CameraPreview(_cameraController!)
+                          else
+                            Container(
+                              color: Colors.grey.shade900,
+                              alignment: Alignment.center,
+                              child: Icon(
+                                _isCameraStarting ? Icons.sync : Icons.videocam_off_rounded,
+                                color: Colors.white60,
+                                size: 24,
+                              ),
+                            ),
+                          Positioned(
+                            bottom: 4, left: 4,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.black54,
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                _isCameraActive ? 'LIVE' : 'OFF',
+                                style: GoogleFonts.poppins(fontSize: 7, color: Colors.white, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border(top: BorderSide(color: Colors.grey.shade100)),
+          ),
+          child: SafeArea(
+            top: false,
+            child: isDeaf
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        'SIGNES RAPIDES (CAPTURE CAMERA EN DIRECT) :',
+                        style: GoogleFonts.poppins(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.grey.shade400, letterSpacing: 1),
+                      ),
+                      const SizedBox(height: 8),
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: ['BONJOUR', 'MERCI', 'URGENCE', 'AIDE'].map((word) {
+                            return Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: ActionChip(
+                                onPressed: () {
+                                  _sendChatMessage('[Geste] $word');
+                                  Timer(const Duration(seconds: 3), () {
+                                    if (mounted && _isConnectedToRoom) {
+                                      _receiveChatMessage('Maman (Entendant)', 'D\'accord, j\'ai bien reçu le signe $word !');
+                                    }
+                                  });
+                                },
+                                avatar: Text(_mockSignDatabase[word]!['icon'] as String),
+                                label: Text(
+                                  word,
+                                  style: GoogleFonts.poppins(fontSize: 11.5, fontWeight: FontWeight.bold, color: AppColors.secondaryDark),
+                                ),
+                                backgroundColor: AppColors.secondary.withOpacity(0.08),
+                                side: BorderSide(color: AppColors.secondary.withOpacity(0.15)),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                    ],
+                  )
+                : Row(
+                    children: [
+                      Expanded(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: AppColors.background,
+                            borderRadius: BorderRadius.circular(24),
+                          ),
+                          child: Row(
+                            children: [
+                              const SizedBox(width: 14),
+                              Expanded(
+                                child: TextField(
+                                  controller: _chatTextController,
+                                  style: GoogleFonts.poppins(fontSize: 13, fontWeight: FontWeight.w500),
+                                  decoration: InputDecoration(
+                                    hintText: 'Écrire un message...',
+                                    hintStyle: GoogleFonts.inter(color: Colors.grey.shade400),
+                                    border: InputBorder.none,
+                                    isDense: true,
+                                    contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                                  ),
+                                  onSubmitted: (val) {
+                                    if (val.trim().isNotEmpty) {
+                                      _sendChatMessage(val);
+                                      _chatTextController.clear();
+                                    }
+                                  },
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.send_rounded, color: AppColors.primary, size: 20),
+                                onPressed: () {
+                                  if (_chatTextController.text.trim().isNotEmpty) {
+                                    _sendChatMessage(_chatTextController.text);
+                                    _chatTextController.clear();
+                                  }
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        icon: Icon(
+                          _isMicrophoneRecording ? Icons.stop_circle_rounded : Icons.mic_rounded,
+                          color: Colors.white,
+                          size: 22,
+                        ),
+                        style: IconButton.styleFrom(
+                          backgroundColor: _isMicrophoneRecording ? AppColors.error : AppColors.primary,
+                          padding: const EdgeInsets.all(12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                        ),
+                        onPressed: _toggleLiveChatVoiceInput,
+                      ),
+                    ],
+                  ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAvatarInterpreterCard() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.grey.shade100),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 60, height: 60,
+            decoration: BoxDecoration(
+              color: (_isAvatarSigning ? AppColors.secondary : AppColors.primary).withOpacity(0.08),
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: (_isAvatarSigning ? AppColors.secondary : AppColors.primary).withOpacity(0.15),
+                width: 1.5,
+              ),
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              _isAvatarSigning
+                  ? (_mockSignDatabase[_activeAvatarGesture]!['icon'] as String)
+                  : '🤟',
+              style: TextStyle(fontSize: _isAvatarSigning ? 32 : 28),
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'INTERPRÈTE LSC VIRTUEL',
+                  style: GoogleFonts.poppins(
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.bold,
+                    color: _isAvatarSigning ? AppColors.secondaryDark : AppColors.primary,
+                    letterSpacing: 1,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _isAvatarSigning
+                      ? 'Signe en cours : "${_activeAvatarGesture}"'
+                      : 'Prêt. L\'interprète traduira en direct ce qui est dit.',
+                  style: GoogleFonts.poppins(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.bold,
+                    color: _isAvatarSigning ? Colors.black87 : Colors.grey.shade600,
+                  ),
+                ),
+                if (_isAvatarSigning) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    _mockSignDatabase[_activeAvatarGesture]!['desc'] as String,
+                    style: GoogleFonts.inter(fontSize: 10.5, color: Colors.grey.shade500, height: 1.3),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _getGestureEmoji(String text) {
+    String word = text.replaceAll('[Geste] ', '').toUpperCase().trim();
+    if (_mockSignDatabase.containsKey(word)) {
+      return _mockSignDatabase[word]!['icon'] as String;
+    }
+    return '👋';
+  }
+
+  void _toggleLiveChatVoiceInput() {
+    if (_isMicrophoneRecording) {
+      setState(() {
+        _isMicrophoneRecording = false;
+      });
+      return;
+    }
+
+    setState(() {
+      _isMicrophoneRecording = true;
+    });
+
+    showModalBottomSheet(
+      context: context,
+      isDismissible: false,
+      backgroundColor: Colors.black87,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+      ),
+      builder: (context) {
+        return Container(
+          padding: const EdgeInsets.all(32),
+          height: 240,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                'ENREGISTREMENT VOCAL EN DIRECT',
+                style: GoogleFonts.poppins(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1.5),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Parlez maintenant à votre interlocuteur...',
+                style: GoogleFonts.poppins(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                height: 60,
+                width: double.infinity,
+                child: AnimatedBuilder(
+                  animation: _animationController,
+                  builder: (context, child) {
+                    return CustomPaint(
+                      painter: SoundwavePainter(
+                        animationValue: _animationController.value,
+                        color: AppColors.primary,
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    Timer(const Duration(milliseconds: 2500), () {
+      if (!mounted) return;
+      Navigator.pop(context);
+      setState(() {
+        _isMicrophoneRecording = false;
+      });
+      
+      _sendChatMessage("Coucou Jean, as-tu besoin d'aide ?");
+      
+      Timer(const Duration(seconds: 3), () {
+        if (mounted && _isConnectedToRoom) {
+          _receiveChatMessage('Jean (Sourd)', '[Geste] AIDE');
+          _triggerTTS('Aide');
+        }
+      });
+    });
   }
 }
 
