@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Fond de l'icône adaptative : teinte des bords du logo. -->
+    <color name="ic_launcher_background">#10111A</color>
+    <!-- Fond espresso de l'écran de démarrage (identique à l'application). -->
+    <color name="splash_background">#1E1715</color>
+</resources>
