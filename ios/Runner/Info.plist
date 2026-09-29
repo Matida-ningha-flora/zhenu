@@ -2,12 +2,25 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>NeuroSigne se connecte au serveur de reconnaissance des signes sur votre réseau local.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>NeuroSigne utilise la caméra pour reconnaître vos signes en LSF.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>NeuroSigne utilise le micro pour traduire la parole en LSF.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>NeuroSigne transcrit la parole pour la traduire en LSF.</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Zhendu App</string>
+	<string>NeuroSigne</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>

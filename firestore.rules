@@ -1,0 +1,218 @@
+rules_version = '2';
+
+// Règles de sécurité NeuroSigne.
+// Rôles : `user` (profil unique) et `admin`. Le rôle est stocké dans
+// users/{uid}.role et ne peut être modifié que par un administrateur.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ------------------------------------------------------------------
+    // Fonctions communes
+    // ------------------------------------------------------------------
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function me() {
+      return request.auth.uid;
+    }
+
+    function myEmail() {
+      return request.auth.token.get('email', '').lower();
+    }
+
+    function profile() {
+      return get(/databases/$(database)/documents/users/$(me())).data;
+    }
+
+    function hasProfile() {
+      return exists(/databases/$(database)/documents/users/$(me()));
+    }
+
+    function isAdmin() {
+      return signedIn() && hasProfile()
+        && profile().role == 'admin'
+        && profile().get('suspended', false) != true;
+    }
+
+    // Compte connecté et non suspendu.
+    function isActiveUser() {
+      return signedIn() && (!hasProfile() || profile().get('suspended', false) != true);
+    }
+
+    function changedOnly(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+    }
+
+    function moderationOff() {
+      let path = /databases/$(database)/documents/config/app;
+      return exists(path)
+        && get(path).data.get('settings', {}).get('communityModerationRequired', true) == false;
+    }
+
+    // ------------------------------------------------------------------
+    // Comptes
+    // ------------------------------------------------------------------
+    match /users/{uid} {
+      allow read: if signedIn() && (me() == uid || isAdmin());
+
+      // Inscription : uniquement son propre profil, toujours en « user ».
+      allow create: if isAdmin()
+        || (signedIn() && me() == uid
+            && request.resource.data.role == 'user'
+            && request.resource.data.get('suspended', false) == false);
+
+      // L'utilisateur modifie son profil, jamais son rôle ni sa suspension.
+      allow update: if isAdmin()
+        || (signedIn() && me() == uid
+            && !request.resource.data.diff(resource.data).affectedKeys()
+                .hasAny(['role', 'suspended', 'deleted', 'uid', 'email']));
+
+      allow delete: if isAdmin();
+    }
+
+    // ------------------------------------------------------------------
+    // Contenus publiés par l'administration
+    // ------------------------------------------------------------------
+    match /announcements/{id} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    // Réglages, bibliothèque d'avatars, configuration du modèle d'IA.
+    match /config/{doc} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    // Signes publiés dans le dictionnaire.
+    match /signs/{signId} {
+      allow read: if signedIn();
+      allow create: if isAdmin() || (isActiveUser() && moderationOff());
+      allow update, delete: if isAdmin();
+    }
+
+    // Signes proposés par la communauté, validés ou rejetés par un admin.
+    match /signProposals/{proposalId} {
+      allow read: if isAdmin()
+        || (signedIn() && resource.data.authorId == me());
+      allow create: if isActiveUser()
+        && request.resource.data.authorId == me()
+        && (request.resource.data.status == 'En attente'
+            || (request.resource.data.status == 'Validé' && moderationOff()))
+        && request.resource.data.word is string
+        && request.resource.data.word.size() > 0
+        && request.resource.data.word.size() <= 60
+        && request.resource.data.description is string
+        && request.resource.data.description.size() <= 1000;
+      allow update, delete: if isAdmin();
+    }
+
+    // Statistiques globales : chacun incrémente, seul l'admin consulte.
+    match /stats/{doc} {
+      allow read: if isAdmin();
+      allow create, update: if signedIn()
+        && request.resource.data.keys()
+            .hasOnly(['translations', 'dictionarySearches', 'searchedTerms']);
+    }
+
+    // ------------------------------------------------------------------
+    // Conversations à distance
+    // ------------------------------------------------------------------
+
+    // Code à 6 caractères ➜ identifiant du salon.
+    match /roomCodes/{code} {
+      allow get: if signedIn();
+      allow list, update: if false;
+      allow create: if isActiveUser()
+        && request.resource.data.createdBy == me()
+        && request.resource.data.roomId is string;
+      allow delete: if signedIn() && resource.data.createdBy == me();
+    }
+
+    match /conversations/{roomId} {
+      function isParticipant() {
+        return me() in resource.data.participants;
+      }
+
+      function isInvited() {
+        return myEmail() in resource.data.invitedEmails;
+      }
+
+      // Seule ma propre entrée d'une carte (lecture, présence) change.
+      function onlyMyKey(field) {
+        return request.resource.data.get(field, {})
+          .diff(resource.data.get(field, {})).affectedKeys().hasOnly([me()]);
+      }
+
+      // L'identifiant du salon s'obtient avec son code : il sert de clé
+      // d'accès pour le rejoindre. Les listes restent limitées.
+      allow get: if signedIn();
+      allow list: if signedIn() && (isParticipant() || isInvited());
+
+      allow create: if isActiveUser()
+        && request.resource.data.createdBy == me()
+        && request.resource.data.participants == [me()]
+        && request.resource.data.active == true
+        && request.resource.data.title is string
+        && request.resource.data.title.size() <= 80;
+
+      allow update: if signedIn() && (
+        // Participant : dernier message, lecture, présence, invitations.
+        (isParticipant() && resource.data.active == true
+          && changedOnly(['lastMessage', 'lastSenderName', 'lastMessageAt',
+                          'lastRead', 'presence', 'invitedEmails'])
+          && onlyMyKey('lastRead') && onlyMyKey('presence'))
+
+        // Rejoindre (code ou invitation) : s'ajouter soi-même uniquement.
+        || (resource.data.active == true && !isParticipant()
+          && changedOnly(['participants', 'participantNames', 'invitedEmails'])
+          && request.resource.data.participants
+              == resource.data.participants.concat([me()])
+          && request.resource.data.participantNames
+              .diff(resource.data.participantNames).affectedKeys().hasOnly([me()])
+          && resource.data.invitedEmails.toSet()
+              .difference(request.resource.data.invitedEmails.toSet())
+              .hasOnly([myEmail()]))
+
+        // Refuser une invitation.
+        || (!isParticipant() && isInvited() && changedOnly(['invitedEmails'])
+          && request.resource.data.invitedEmails.toSet()
+              == resource.data.invitedEmails.toSet().difference([myEmail()].toSet()))
+
+        // Quitter (hors organisateur).
+        || (isParticipant() && resource.data.createdBy != me()
+          && changedOnly(['participants'])
+          && request.resource.data.participants.toSet()
+              == resource.data.participants.toSet().difference([me()].toSet()))
+
+        // Clôturer (organisateur).
+        || (resource.data.createdBy == me() && changedOnly(['active'])
+          && request.resource.data.active == false)
+      );
+
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        function room() {
+          return get(/databases/$(database)/documents/conversations/$(roomId)).data;
+        }
+
+        allow read: if signedIn() && me() in room().participants;
+
+        allow create: if isActiveUser()
+          && me() in room().participants
+          && room().active == true
+          && request.resource.data.keys()
+              .hasOnly(['senderId', 'senderName', 'text', 'signed', 'createdAt'])
+          && request.resource.data.senderId == me()
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 1000
+          && request.resource.data.createdAt == request.time;
+
+        allow update, delete: if false;
+      }
+    }
+  }
+}

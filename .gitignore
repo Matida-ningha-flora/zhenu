@@ -43,3 +43,8 @@ app.*.map.json
 node_modules/
 .env
 node_modules/
+
+# Tests des règles Firestore
+firestore-tests/node_modules/
+*-debug.log
+/android/build/

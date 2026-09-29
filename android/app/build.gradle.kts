@@ -38,8 +38,17 @@ android {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+            // Règles de conservation pour MediaPipe (voir proguard-rules.pro).
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
+}
+
+dependencies {
+    implementation("com.google.mediapipe:tasks-vision:1.0.0")
 }
 
 flutter {

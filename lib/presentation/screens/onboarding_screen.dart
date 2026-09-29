@@ -1,8 +1,16 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
-import '../../core/constants/app_colors.dart';
-import 'avatar_selection_screen.dart';
 
+import '../../core/constants/app_colors.dart';
+import '../../core/l10n/tr.dart';
+import '../../core/preferences/app_preferences.dart';
+import '../navigation.dart';
+import '../widgets/lsf_explain_button.dart';
+import '../widgets/motion.dart';
+import '../widgets/ui_kit.dart';
+import 'login_screen.dart';
+import 'register_screen.dart';
+
+/// Page d'accueil : présente les fonctions principales avant la connexion.
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
 
@@ -10,266 +18,287 @@ class OnboardingScreen extends StatefulWidget {
   State<OnboardingScreen> createState() => _OnboardingScreenState();
 }
 
+class _Slide {
+  final IconData from;
+  final IconData to;
+  final Color color;
+  final String title;
+  final String body;
+
+  const _Slide(this.from, this.to, this.color, this.title, this.body);
+}
+
 class _OnboardingScreenState extends State<OnboardingScreen> {
-  final PageController _pageController = PageController();
-  int _currentPage = 0;
+  final _controller = PageController();
+  int _page = 0;
 
-  final List<Map<String, dynamic>> _pages = [
-    {
-      'icon': Icons.translate_rounded,
-      'title': 'Traduction\nInstantanée',
-      'description': 'Traduisez la langue des signes camerounaise en texte et vice-versa en temps réel.',
-      'color': AppColors.primary,
-    },
-    {
-      'icon': Icons.school_rounded,
-      'title': 'Apprentissage\nInteractif',
-      'description': 'Entraînez-vous avec des leçons ludiques et suivez votre progression avec des quiz.',
-      'color': AppColors.secondary,
-    },
-    {
-      'icon': Icons.campaign_rounded,
-      'title': 'Assistance\nUrgences LSC',
-      'description': 'Signalez instantanément un besoin d\'aide avec des alertes vocales fortes et SOS SMS.',
-      'color': AppColors.error,
-    },
-  ];
+  List<_Slide> get _slides => [
+        _Slide(
+          Icons.front_hand_rounded,
+          Icons.record_voice_over_rounded,
+          AppColors.primary,
+          tr('Signez, on vous entend', 'Sign, and be heard'),
+          tr('Signez devant la caméra : vos signes LSF sont traduits en texte et en voix pour votre interlocuteur.',
+              'Sign in front of the camera: your LSF signs are translated into text and speech for the other person.'),
+        ),
+        _Slide(
+          Icons.mic_rounded,
+          Icons.sign_language_rounded,
+          AppColors.secondary,
+          tr('Parlez, on vous répond en LSF', 'Speak, get answers in LSF'),
+          tr('Parlez ou écrivez : le message est traduit en LSF par un avatar, une vidéo ou du texte, selon votre choix.',
+              'Speak or type: your message is translated into LSF by an avatar, a video or text, as you prefer.'),
+        ),
+        _Slide(
+          Icons.groups_rounded,
+          Icons.forum_rounded,
+          AppColors.terracotta,
+          tr('Conversez à plusieurs', 'Talk with several people'),
+          tr('Échangez avec un ou plusieurs interlocuteurs en même temps. Chaque message est traduit en direct.',
+              'Talk with one or more people at once. Every message is translated live.'),
+        ),
+        _Slide(
+          Icons.search_rounded,
+          Icons.menu_book_rounded,
+          AppColors.amber,
+          tr('Le dictionnaire LSF en poche',
+              'The LSF dictionary in your pocket'),
+          tr('Cherchez un signe par mot, par catégorie ou par geste, même sans connexion.',
+              'Look up a sign by word, category or gesture, even offline.'),
+        ),
+      ];
 
-  void _finishOnboarding() {
-    Navigator.pushReplacement(
-      context,
-      PageRouteBuilder(
-        pageBuilder: (context, animation, secondaryAnimation) => const AvatarSelectionScreen(),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          return FadeTransition(opacity: animation, child: child);
-        },
-        transitionDuration: const Duration(milliseconds: 600),
-      ),
-    );
+  Future<void> _finish(Widget next) async {
+    await AppPreferences.markOnboardingSeen();
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(fadeRoute(next));
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final size = MediaQuery.of(context).size;
-    final currentPageData = _pages[_currentPage];
+    final theme = Theme.of(context);
+    final slides = _slides;
+    final isLast = _page == slides.length - 1;
 
     return Scaffold(
-      backgroundColor: AppColors.darkBackground,
-      body: Stack(
-        children: [
-          // Arrière-plan flou réactif à la page en cours
-          AnimatedPositioned(
-            duration: const Duration(milliseconds: 800),
-            top: _currentPage == 0 ? -100 : (_currentPage == 1 ? -200 : -50),
-            right: _currentPage == 0 ? -100 : (_currentPage == 1 ? 50 : -200),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 800),
-              width: size.width * 0.9,
-              height: size.width * 0.9,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: (currentPageData['color'] as Color).withOpacity(0.25),
+      body: Stack(children: [
+        // Taches de couleur qui se déplacent à chaque page (animation d'origine).
+        Positioned.fill(
+          child: AmbientBlobs(
+            phase: _page,
+            colors: [
+              slides[_page].color,
+              AppColors.secondary,
+              AppColors.primary,
+            ],
+            opacity: theme.brightness == Brightness.dark ? 0.22 : 0.16,
+          ),
+        ),
+        SafeArea(
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 12, 12, 0),
+                child: Row(children: [
+                  const BrandMark(size: 36),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text('NeuroSigne',
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleMedium),
+                  ),
+                  _LanguageToggle(onChanged: () => setState(() {})),
+                  if (!isLast)
+                    TextButton(
+                      onPressed: () => _controller.animateToPage(
+                          slides.length - 1,
+                          duration: const Duration(milliseconds: 350),
+                          curve: Curves.easeOutCubic),
+                      child: Text(tr('Passer', 'Skip')),
+                    ),
+                ]),
               ),
-            ),
-          ),
-          AnimatedPositioned(
-            duration: const Duration(milliseconds: 800),
-            bottom: _currentPage == 0 ? -150 : (_currentPage == 1 ? -50 : -200),
-            left: _currentPage == 0 ? -150 : (_currentPage == 1 ? -250 : 50),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 800),
-              width: size.width * 0.9,
-              height: size.width * 0.9,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: AppColors.primary.withOpacity(_currentPage == 0 ? 0.1 : 0.2),
+              Expanded(
+                child: PageView.builder(
+                  controller: _controller,
+                  itemCount: slides.length,
+                  onPageChanged: (page) => setState(() => _page = page),
+                  itemBuilder: (context, index) =>
+                      _SlideView(slide: slides[index]),
+                ),
               ),
-            ),
-          ),
-
-          // Filtre assombrissant
-          Container(
-            color: Colors.black.withOpacity(0.2),
-          ),
-
-          SafeArea(
-            child: Column(
-              children: [
-                // Header (Sauter)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                  child: Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton(
-                      onPressed: _finishOnboarding,
-                      child: Text(
-                        'Passer',
-                        style: GoogleFonts.poppins(
-                          color: Colors.white70,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 14,
-                        ),
-                      ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(
+                  slides.length,
+                  (i) => AnimatedContainer(
+                    duration: const Duration(milliseconds: 250),
+                    margin: const EdgeInsets.symmetric(horizontal: 4),
+                    width: i == _page ? 24 : 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: i == _page
+                          ? theme.colorScheme.primary
+                          : theme.colorScheme.outlineVariant,
+                      borderRadius: BorderRadius.circular(4),
                     ),
                   ),
                 ),
-
-                // Contenu des slides
-                Expanded(
-                  child: PageView.builder(
-                    controller: _pageController,
-                    onPageChanged: (int page) {
-                      setState(() {
-                        _currentPage = page;
-                      });
-                    },
-                    itemCount: _pages.length,
-                    itemBuilder: (context, index) {
-                      final page = _pages[index];
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 32),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            // Icône sur grand disque néon
-                            Container(
-                              width: 160,
-                              height: 160,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                gradient: LinearGradient(
-                                  colors: [
-                                    (page['color'] as Color).withOpacity(0.3),
-                                    (page['color'] as Color).withOpacity(0.05),
-                                  ],
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                ),
-                                border: Border.all(
-                                  color: (page['color'] as Color).withOpacity(0.4),
-                                  width: 1.5,
-                                ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: (page['color'] as Color).withOpacity(0.15),
-                                    blurRadius: 35,
-                                    spreadRadius: 2,
-                                  ),
-                                ],
-                              ),
-                              child: Center(
-                                child: Icon(
-                                  page['icon'] as IconData,
-                                  size: 70,
-                                  color: Colors.white,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 54),
-                            // Titre
-                            Text(
-                              page['title'] as String,
-                              style: GoogleFonts.poppins(
-                                fontSize: 32,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
-                                height: 1.25,
-                                shadows: [
-                                  Shadow(
-                                    color: Colors.black.withOpacity(0.3),
-                                    offset: const Offset(0, 4),
-                                    blurRadius: 10,
-                                  ),
-                                ],
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: 20),
-                            // Description
-                            Text(
-                              page['description'] as String,
-                              style: GoogleFonts.inter(
-                                fontSize: 15,
-                                color: Colors.white.withOpacity(0.7),
-                                height: 1.6,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-                ),
-
-                // Section footer (Indicateurs & Bouton)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 36),
-                  child: Column(
-                    children: [
-                      // Indicateurs animés
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: List.generate(
-                          _pages.length,
-                          (index) => AnimatedContainer(
-                            duration: const Duration(milliseconds: 300),
-                            margin: const EdgeInsets.symmetric(horizontal: 5),
-                            width: _currentPage == index ? 26 : 8,
-                            height: 8,
-                            decoration: BoxDecoration(
-                              color: _currentPage == index
-                                  ? (currentPageData['color'] as Color)
-                                  : Colors.white.withOpacity(0.2),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
+                child: isLast
+                    ? Column(children: [
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton(
+                            onPressed: () => _finish(const RegisterScreen()),
+                            child: Text(
+                                tr('Créer un compte', 'Create an account')),
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 36),
-                      // Bouton d'action principale
-                      SizedBox(
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton(
+                            onPressed: () => _finish(const LoginScreen()),
+                            child: Text(tr("J'ai déjà un compte",
+                                'I already have an account')),
+                          ),
+                        ),
+                      ])
+                    : SizedBox(
                         width: double.infinity,
-                        child: ElevatedButton(
-                          onPressed: () {
-                            if (_currentPage == _pages.length - 1) {
-                              _finishOnboarding();
-                            } else {
-                              _pageController.nextPage(
-                                duration: const Duration(milliseconds: 400),
-                                curve: Curves.easeInOutCubic,
-                              );
-                            }
-                          },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.white,
-                            foregroundColor: AppColors.darkBackground,
-                            padding: const EdgeInsets.symmetric(vertical: 18),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            elevation: 5,
-                            shadowColor: Colors.black.withOpacity(0.25),
-                          ),
-                          child: Text(
-                            _currentPage == _pages.length - 1 ? 'COMMENCER' : 'SUIVANT',
-                            style: GoogleFonts.poppins(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                              color: AppColors.darkBackground,
-                              letterSpacing: 1,
-                            ),
-                          ),
+                        child: FilledButton(
+                          onPressed: () => _controller.nextPage(
+                              duration: const Duration(milliseconds: 350),
+                              curve: Curves.easeOutCubic),
+                          child: Text(tr('Continuer', 'Continue')),
                         ),
                       ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
+        ),
+      ]),
+    );
+  }
+}
+
+class _SlideView extends StatelessWidget {
+  final _Slide slide;
+  const _SlideView({required this.slide});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 28),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              FadeSlideIn(
+                offset: 28,
+                child: Floating(child: _Illustration(slide: slide)),
+              ),
+              const SizedBox(height: 40),
+              FadeSlideIn(
+                delay: const Duration(milliseconds: 120),
+                child: Text(slide.title,
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.headlineMedium),
+              ),
+              const SizedBox(height: 12),
+              FadeSlideIn(
+                delay: const Duration(milliseconds: 220),
+                child: Text(slide.body,
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodyLarge
+                        ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+              ),
+              const SizedBox(height: 8),
+              LsfExplainButton(
+                  text: '${slide.title}. ${slide.body}', showLabel: true),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _Illustration extends StatelessWidget {
+  final _Slide slide;
+  const _Illustration({required this.slide});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: 280,
+      height: 200,
+      decoration: BoxDecoration(
+        color: slide.color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(32),
+        border: Border.all(color: slide.color.withValues(alpha: 0.18)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          _bubble(scheme, slide.from),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            child:
+                Icon(Icons.arrow_forward_rounded, color: slide.color, size: 28),
+          ),
+          _bubble(scheme, slide.to),
         ],
       ),
+    );
+  }
+
+  Widget _bubble(ColorScheme scheme, IconData icon) => Container(
+        width: 84,
+        height: 84,
+        decoration: BoxDecoration(
+          color: scheme.surface,
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: [
+            BoxShadow(
+              color: slide.color.withValues(alpha: 0.14),
+              blurRadius: 24,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Icon(icon, color: slide.color, size: 40),
+      );
+}
+
+class _LanguageToggle extends StatelessWidget {
+  final VoidCallback onChanged;
+  const _LanguageToggle({required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final english = AppPreferences.instance.isEnglish;
+    return TextButton.icon(
+      onPressed: () async {
+        await AppPreferences.instance
+            .setGuestLanguage(english ? 'Français' : 'English');
+        onChanged();
+      },
+      icon: const Icon(Icons.language_rounded, size: 18),
+      label: Text(english ? 'FR' : 'EN'),
     );
   }
 }

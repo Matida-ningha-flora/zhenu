@@ -1,10 +1,16 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+
 import '../../core/constants/app_colors.dart';
+import '../../core/l10n/tr.dart';
+import '../../core/preferences/app_preferences.dart';
 import '../../data/services/firebase_auth_service.dart';
+import '../navigation.dart';
+import '../widgets/motion.dart';
+import '../widgets/ui_kit.dart';
+import 'login_screen.dart';
 import 'onboarding_screen.dart';
-import 'user_dashboard.dart';
-import 'admin_dashboard.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -15,72 +21,43 @@ class SplashScreen extends StatefulWidget {
 
 class _SplashScreenState extends State<SplashScreen>
     with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _fadeAnimation;
-  late Animation<double> _scaleAnimation;
+  // Animation d'origine : apparition en fondu et rebond élastique du logo.
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 2200),
+  )..forward();
+  late final Animation<double> _fade = CurvedAnimation(
+      parent: _controller,
+      curve: const Interval(0.0, 0.6, curve: Curves.easeIn));
+  late final Animation<double> _scale = Tween(begin: 0.7, end: 1.0).animate(
+      CurvedAnimation(
+          parent: _controller,
+          curve: const Interval(0.0, 0.8, curve: Curves.elasticOut)));
 
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
-      duration: const Duration(milliseconds: 2200),
-      vsync: this,
-    );
-    
-    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0.0, 0.6, curve: Curves.easeIn),
-      ),
-    );
-    
-    _scaleAnimation = Tween<double>(begin: 0.7, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0.0, 0.8, curve: Curves.elasticOut),
-      ),
-    );
-    
-    _controller.forward();
-    
-    // Navigation après 3.5 secondes avec vérification de connexion
-    Future.delayed(const Duration(milliseconds: 3500), () async {
-      if (!mounted) return;
-      
-      Map<String, dynamic>? user;
-      try {
-        final authService = FirebaseAuthService();
-        user = await authService.getCurrentUser().timeout(const Duration(seconds: 4));
-      } catch (e) {
-        print("Erreur de session dans SplashScreen : $e");
-      }
-      
-      if (mounted) {
-        Widget nextScreen;
-        if (user != null) {
-          final String userRole = user['role'] ?? 'normal';
-          nextScreen = userRole == 'admin'
-              ? AdminDashboard(email: user['email'] ?? '')
-              : UserDashboard(
-                  role: userRole,
-                  email: user['email'] ?? '',
-                );
-        } else {
-          nextScreen = const OnboardingScreen();
-        }
-        
-        Navigator.pushReplacement(
-          context,
-          PageRouteBuilder(
-            pageBuilder: (context, animation, secondaryAnimation) => nextScreen,
-            transitionsBuilder: (context, animation, secondaryAnimation, child) {
-              return FadeTransition(opacity: animation, child: child);
-            },
-            transitionDuration: const Duration(milliseconds: 800),
-          ),
-        );
-      }
-    });
+    _route();
+  }
+
+  Future<void> _route() async {
+    final results = await Future.wait<Object?>([
+      FirebaseAuthService()
+          .getCurrentUser()
+          .timeout(const Duration(seconds: 4), onTimeout: () => null)
+          .catchError((_) => null),
+      AppPreferences.hasSeenOnboarding(),
+      Future<void>.delayed(const Duration(milliseconds: 1900)),
+    ]);
+    if (!mounted) return;
+    final user = results[0] as Map<String, dynamic>?;
+    final seenOnboarding = results[1] as bool;
+    if (user != null) {
+      openHomeFor(context, user);
+      return;
+    }
+    Navigator.of(context).pushReplacement(fadeRoute(
+        seenOnboarding ? const LoginScreen() : const OnboardingScreen()));
   }
 
   @override
@@ -91,158 +68,108 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   Widget build(BuildContext context) {
-    final size = MediaQuery.of(context).size;
+    final theme = Theme.of(context);
     return Scaffold(
       backgroundColor: AppColors.darkBackground,
-      body: Stack(
-        children: [
-          // Arrière-plan Mesh Gradient (Cercles flous colorés)
-          Positioned(
-            top: -size.height * 0.2,
-            right: -size.width * 0.2,
-            child: Container(
-              width: size.width * 0.8,
-              height: size.width * 0.8,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: AppColors.primary.withOpacity(0.35),
-              ),
-              child: ClipOval(
-                child: Container(
-                  decoration: const BoxDecoration(
-                    gradient: RadialGradient(
-                      colors: [AppColors.primary, Colors.transparent],
+      body: Stack(children: [
+        // Fond « mesh gradient » : taches caramel et or qui dérivent.
+        const Positioned.fill(
+          child: AmbientBlobs(
+            colors: [
+              AppColors.primary,
+              AppColors.secondary,
+              AppColors.primaryDark
+            ],
+            opacity: 0.55,
+          ),
+        ),
+        Positioned.fill(
+          child: Container(color: Colors.black.withValues(alpha: 0.12)),
+        ),
+        SafeArea(
+          child: Column(
+            children: [
+              const Spacer(flex: 3),
+              FadeTransition(
+                opacity: _fade,
+                child: ScaleTransition(
+                  scale: _scale,
+                  child: Container(
+                    width: 132,
+                    height: 132,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(
+                        colors: [
+                          Colors.white.withValues(alpha: 0.18),
+                          Colors.white.withValues(alpha: 0.04),
+                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.3),
+                          width: 1.5),
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppColors.primary.withValues(alpha: 0.35),
+                          blurRadius: 40,
+                          spreadRadius: 4,
+                        ),
+                      ],
                     ),
+                    alignment: Alignment.center,
+                    child: const BrandMark(size: 84),
                   ),
                 ),
               ),
-            ),
-          ),
-          Positioned(
-            bottom: -size.height * 0.15,
-            left: -size.width * 0.2,
-            child: Container(
-              width: size.width * 0.9,
-              height: size.width * 0.9,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: AppColors.secondary.withOpacity(0.25),
+              const SizedBox(height: 28),
+              FadeSlideIn(
+                delay: const Duration(milliseconds: 500),
+                child: Text(
+                  'NeuroSigne',
+                  style: theme.textTheme.headlineLarge?.copyWith(
+                      color: Colors.white, fontSize: 38, letterSpacing: 1.5),
+                ),
               ),
-              child: ClipOval(
+              const SizedBox(height: 10),
+              FadeSlideIn(
+                delay: const Duration(milliseconds: 750),
                 child: Container(
-                  decoration: const BoxDecoration(
-                    gradient: RadialGradient(
-                      colors: [AppColors.secondary, Colors.transparent],
-                    ),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(20),
+                    border:
+                        Border.all(color: Colors.white.withValues(alpha: 0.16)),
+                  ),
+                  child: Text(
+                    tr('LA LANGUE DES SIGNES, POUR TOUS',
+                        'SIGN LANGUAGE, FOR EVERYONE'),
+                    style: theme.textTheme.labelSmall?.copyWith(
+                        color: Colors.white.withValues(alpha: 0.9),
+                        letterSpacing: 1.6),
                   ),
                 ),
               ),
-            ),
-          ),
-          
-          // Effet de filtre de flou sur le fond
-          Container(
-            color: Colors.black.withOpacity(0.15),
-          ),
-
-          // Contenu principal
-          Center(
-            child: FadeTransition(
-              opacity: _fadeAnimation,
-              child: ScaleTransition(
-                scale: _scaleAnimation,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    // Icone centrale dans un cadre Glassmorphism
-                    Container(
-                      width: 140,
-                      height: 140,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: LinearGradient(
-                          colors: [
-                            Colors.white.withOpacity(0.18),
-                            Colors.white.withOpacity(0.04),
-                          ],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        border: Border.all(
-                          color: Colors.white.withOpacity(0.3),
-                          width: 1.5,
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: AppColors.primary.withOpacity(0.25),
-                            blurRadius: 30,
-                            spreadRadius: 2,
-                          ),
-                        ],
-                      ),
-                      child: const Icon(
-                        Icons.handshake_rounded,
-                        size: 70,
-                        color: Colors.white,
-                      ),
-                    ),
-                    const SizedBox(height: 32),
-                    Text(
-                      'Zhẽnù',
-                      style: GoogleFonts.poppins(
-                        fontSize: 48,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                        letterSpacing: 3,
-                        shadows: [
-                          Shadow(
-                            color: Colors.black.withOpacity(0.25),
-                            offset: const Offset(0, 4),
-                            blurRadius: 10,
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.08),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: Colors.white.withOpacity(0.15),
-                          width: 1,
-                        ),
-                      ),
-                      child: Text(
-                        'LANGUE DES SIGNES CAMEROUNAISE',
-                        style: GoogleFonts.poppins(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white.withOpacity(0.9),
-                          letterSpacing: 1.5,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 60),
-                    // Indicateur de chargement customisé (plus fin et moderne)
-                    SizedBox(
-                      width: 45,
-                      height: 45,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2.5,
-                        valueColor: AlwaysStoppedAnimation<Color>(
-                          Colors.white.withOpacity(0.7),
-                        ),
-                      ),
-                    ),
-                  ],
+              const Spacer(flex: 3),
+              FadeSlideIn(
+                delay: const Duration(milliseconds: 1000),
+                child: SizedBox(
+                  width: 28,
+                  height: 28,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.2,
+                    color: Colors.white.withValues(alpha: 0.75),
+                  ),
                 ),
               ),
-            ),
+              const SizedBox(height: 48),
+            ],
           ),
-        ],
-      ),
+        ),
+      ]),
     );
   }
 }

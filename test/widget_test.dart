@@ -1,13 +1,26 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:zhendu_app/presentation/widgets/motion.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zhendu_app/main.dart';
 
 void main() {
-  testWidgets('Smoke test - App starts and builds splash screen', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const ZhenduApp());
+  setUp(() {
+    GoogleFonts.config.allowRuntimeFetching = false;
+    Motion.ambient = false;
+    SharedPreferences.setMockInitialValues({});
+  });
 
-    // Verify that the title and region descriptions are shown on Splash.
-    expect(find.text('Zhẽnù'), findsOneWidget);
-    expect(find.text('LANGUE DES SIGNES CAMEROUNAISE'), findsOneWidget);
+  testWidgets('Le démarrage mène à la page d’accueil sans mode urgence',
+      (tester) async {
+    await tester.pumpWidget(const NeuroSigneApp());
+    expect(find.text('NeuroSigne'), findsOneWidget);
+    expect(find.text('LA LANGUE DES SIGNES, POUR TOUS'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Signez, on vous entend'), findsOneWidget);
+    expect(find.textContaining('rgence'), findsNothing);
   });
 }

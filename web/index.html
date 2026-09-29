@@ -1,38 +1,94 @@
 <!DOCTYPE html>
-<html>
+<html lang="fr">
 <head>
   <!--
-    If you are serving your web app in a path other than the root, change the
-    href value below to reflect the base path you are serving from.
-
-    The path provided below has to start and end with a slash "/" in order for
-    it to work correctly.
-
-    For more details:
-    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
-
-    This is a placeholder for base href that will be replaced by the value of
-    the `--base-href` argument provided to `flutter build`.
+    Chemin de base remplacé par la valeur de `--base-href` lors de
+    `flutter build web`.
   -->
   <base href="$FLUTTER_BASE_HREF">
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="NeuroSigne — traduction et apprentissage de la Langue des Signes Française.">
+  <meta name="theme-color" content="#1E1715">
 
-  <!-- iOS meta tags & icons -->
-  <meta name="apple-mobile-web-app-capable" content="yes">
+  <!-- iOS -->
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="zhendu_app">
+  <meta name="apple-mobile-web-app-title" content="NeuroSigne">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
-  <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
-
-  <title>zhendu_app</title>
+  <title>NeuroSigne</title>
   <link rel="manifest" href="manifest.json">
+
+  <style>
+    /* Écran de chargement affiché pendant le téléchargement de l'application,
+       au lieu d'une page blanche. Il disparaît à la première image Flutter. */
+    html, body { margin: 0; height: 100%; background: #1E1715; }
+    #loading {
+      position: fixed; inset: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 22px;
+      background:
+        radial-gradient(circle at 85% 8%, rgba(199,111,38,.55), transparent 45%),
+        radial-gradient(circle at 10% 92%, rgba(229,169,59,.35), transparent 45%),
+        #1E1715;
+      font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      color: #fff; transition: opacity .45s ease; z-index: 10;
+    }
+    #loading.hidden { opacity: 0; pointer-events: none; }
+    #loading .logo {
+      width: 96px; height: 96px; border-radius: 28px;
+      background: #10111A; overflow: hidden;
+      box-shadow: 0 12px 40px rgba(229,169,59,.35);
+      display: flex; align-items: center; justify-content: center;
+      animation: breathe 2s ease-in-out infinite alternate;
+    }
+    #loading .logo img { width: 100%; height: 100%; object-fit: cover; }
+    #loading h1 { margin: 0; font-size: 30px; font-weight: 700; letter-spacing: 1px; }
+    #loading p { margin: -12px 0 0; font-size: 12px; letter-spacing: 1.6px; opacity: .8; }
+    #loading .bar {
+      width: 140px; height: 4px; border-radius: 2px; overflow: hidden;
+      background: rgba(255,255,255,.15); margin-top: 18px;
+    }
+    #loading .bar::after {
+      content: ''; display: block; width: 40%; height: 100%; border-radius: 2px;
+      background: #E5A93B; animation: slide 1.2s ease-in-out infinite;
+    }
+    #loading .hint { font-size: 12px; opacity: 0; transition: opacity .6s; margin-top: 4px; }
+    #loading .hint.visible { opacity: .7; }
+    @keyframes breathe { from { transform: scale(.95); } to { transform: scale(1.05); } }
+    @keyframes slide { from { transform: translateX(-110%); } to { transform: translateX(260%); } }
+    @media (prefers-reduced-motion: reduce) {
+      #loading .logo, #loading .bar::after { animation: none; }
+    }
+  </style>
 </head>
 <body>
+  <div id="loading" role="status" aria-live="polite">
+    <div class="logo" aria-hidden="true">
+      <img src="logo.png" alt="" width="96" height="96">
+    </div>
+    <h1>NeuroSigne</h1>
+    <p>LA LANGUE DES SIGNES, POUR TOUS</p>
+    <div class="bar"></div>
+    <div class="hint" id="loading-hint">Chargement de l’application…</div>
+  </div>
+  <script>
+    // Message rassurant si le chargement dure (connexion lente).
+    setTimeout(function () {
+      var hint = document.getElementById('loading-hint');
+      if (hint) hint.classList.add('visible');
+    }, 4000);
+    // Retrait de l'écran de chargement dès la première image Flutter.
+    window.addEventListener('flutter-first-frame', function () {
+      var el = document.getElementById('loading');
+      if (!el) return;
+      el.classList.add('hidden');
+      setTimeout(function () { el.remove(); }, 500);
+    });
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>
