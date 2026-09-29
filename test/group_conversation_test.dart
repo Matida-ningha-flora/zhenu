@@ -34,7 +34,8 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('Sans compte en ligne : un compte est demandé (pas de mode local)',
+  testWidgets(
+      'Sans compte en ligne : un compte est demandé (pas de mode local)',
       (tester) async {
     await pumpTab(tester);
     expect(find.text('Compte en ligne requis'), findsOneWidget);

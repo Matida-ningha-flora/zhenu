@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../widgets/user_type_selector.dart';
+
 import '../../core/l10n/tr.dart';
 import '../../data/services/firebase_auth_service.dart';
 import '../navigation.dart';
@@ -22,6 +24,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _confirm = TextEditingController();
   bool _loading = false;
   String? _error;
+
+  /// Profil choisi : obligatoire, il adapte toute l'application.
+  String? _userType;
+  bool _userTypeMissing = false;
 
   @override
   void initState() {
@@ -51,7 +57,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   Future<void> _submit() async {
     FocusScope.of(context).unfocus();
-    if (!_formKey.currentState!.validate()) return;
+    final valid = _formKey.currentState!.validate();
+    setState(() => _userTypeMissing = _userType == null);
+    if (!valid || _userType == null) return;
     setState(() {
       _loading = true;
       _error = null;
@@ -61,6 +69,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         name: _name.text,
         email: _email.text,
         password: _password.text,
+        userType: _userType!,
       );
       if (!mounted) return;
       if (user != null) openHomeFor(context, user);
@@ -102,6 +111,27 @@ class _RegisterScreenState extends State<RegisterScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                Text(tr('Je suis…', 'I am…'),
+                    style: theme.textTheme.titleSmall),
+                const SizedBox(height: 4),
+                Text(
+                  tr('L’application vous montrera ce qui vous concerne. Modifiable plus tard.',
+                      'The app will show you what concerns you. You can change it later.'),
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                ),
+                const SizedBox(height: 10),
+                UserTypeSelector(
+                  value: _userType,
+                  errorText: _userTypeMissing
+                      ? tr('Choisissez votre profil.', 'Choose your profile.')
+                      : null,
+                  onChanged: (value) => setState(() {
+                    _userType = value;
+                    _userTypeMissing = false;
+                  }),
+                ),
+                const SizedBox(height: 14),
                 GlowOnFocus(
                   child: TextFormField(
                     controller: _name,
@@ -213,22 +243,25 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
         ),
         const SizedBox(height: 20),
-        Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Text(tr('Déjà inscrit ?', 'Already registered?'),
-              style: theme.textTheme.bodyMedium
-                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-          TextButton(
-            onPressed: () {
-              if (Navigator.of(context).canPop()) {
-                Navigator.of(context).pop();
-              } else {
-                Navigator.of(context)
-                    .pushReplacement(fadeRoute(const LoginScreen()));
-              }
-            },
-            child: Text(tr('Se connecter', 'Sign in')),
-          ),
-        ]),
+        Wrap(
+            alignment: WrapAlignment.center,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(tr('Déjà inscrit ?', 'Already registered?'),
+                  style: theme.textTheme.bodyMedium
+                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+              TextButton(
+                onPressed: () {
+                  if (Navigator.of(context).canPop()) {
+                    Navigator.of(context).pop();
+                  } else {
+                    Navigator.of(context)
+                        .pushReplacement(fadeRoute(const LoginScreen()));
+                  }
+                },
+                child: Text(tr('Se connecter', 'Sign in')),
+              ),
+            ]),
       ],
     );
   }

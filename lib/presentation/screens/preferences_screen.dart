@@ -3,10 +3,13 @@ import 'package:flutter/material.dart';
 import '../../core/l10n/tr.dart';
 import '../../core/preferences/app_preferences.dart';
 import '../../data/services/admin_data_service.dart';
+import '../../data/services/firebase_auth_service.dart';
 import '../widgets/avatar_portrait.dart';
 import '../widgets/lsf_explain_button.dart';
 import '../widgets/reception_modes.dart';
+import '../widgets/server_settings.dart';
 import '../widgets/ui_kit.dart';
+import '../widgets/user_type_selector.dart';
 
 /// Préférences : mode de réception, style d'avatar, langue, thème et niveau.
 /// Chaque changement est appliqué et enregistré immédiatement.
@@ -65,54 +68,70 @@ class _PreferencesScreenState extends State<PreferencesScreen> {
               const SizedBox(height: 24),
             ],
             _Section(
-              title: tr(
-                  'Mode de réception des réponses', 'How you receive answers'),
+              title: tr('Je suis…', 'I am…'),
               description: tr(
-                  'Comment les messages de vos interlocuteurs vous sont présentés.',
-                  'How messages from the people you talk to are shown to you.'),
-              child: Column(children: [
-                for (final mode in ReceptionMode.all)
-                  _FormatOption(
-                    icon: mode.icon,
-                    title: mode.title,
-                    subtitle: mode.subtitle,
-                    selected: _prefs.responseFormat == mode.id,
-                    onTap: () => _update(() => _prefs.responseFormat = mode.id),
-                  ),
-              ]),
-            ),
-            _Section(
-              title: tr('Style de l’avatar', 'Avatar style'),
-              child: FutureBuilder<List<Map<String, dynamic>>>(
-                future: AdminDataService.cachedAvatars(),
-                builder: (context, snapshot) {
-                  final avatars =
-                      (snapshot.data ?? AdminDataService.defaultAvatars)
-                          .where((a) => a['enabled'] == true)
-                          .toList();
-                  return LayoutBuilder(builder: (context, constraints) {
-                    final width = (constraints.maxWidth - 2 * 12) / 3;
-                    return Wrap(
-                      spacing: 12,
-                      runSpacing: 12,
-                      children: [
-                        for (final avatar in avatars)
-                          SizedBox(
-                            width: width,
-                            child: _AvatarOption(
-                              id: avatar['id'] as String,
-                              label: avatar['name'] as String? ?? '',
-                              selected: _prefs.signingAvatar == avatar['id'],
-                              onTap: () => _update(() => _prefs.signingAvatar =
-                                  avatar['id'] as String),
-                            ),
-                          ),
-                      ],
-                    );
-                  });
+                  'L’application vous montre ce qui vous concerne : les signes pour une personne sourde, le texte et la voix pour une personne entendante.',
+                  'The app shows you what concerns you: signs for a deaf person, text and voice for a hearing person.'),
+              child: UserTypeSelector(
+                value: _prefs.userProfile,
+                onChanged: (id) {
+                  _update(() => _prefs.userProfile = id);
+                  FirebaseAuthService().updateUserType(id);
                 },
               ),
             ),
+            if (_prefs.receivesSigns) ...[
+              _Section(
+                title: tr('Mode de réception des réponses',
+                    'How you receive answers'),
+                description: tr(
+                    'Comment les messages de vos interlocuteurs vous sont présentés.',
+                    'How messages from the people you talk to are shown to you.'),
+                child: Column(children: [
+                  for (final mode in ReceptionMode.all)
+                    _FormatOption(
+                      icon: mode.icon,
+                      title: mode.title,
+                      subtitle: mode.subtitle,
+                      selected: _prefs.responseFormat == mode.id,
+                      onTap: () =>
+                          _update(() => _prefs.responseFormat = mode.id),
+                    ),
+                ]),
+              ),
+              _Section(
+                title: tr('Style de l’avatar', 'Avatar style'),
+                child: FutureBuilder<List<Map<String, dynamic>>>(
+                  future: AdminDataService.cachedAvatars(),
+                  builder: (context, snapshot) {
+                    final avatars =
+                        (snapshot.data ?? AdminDataService.defaultAvatars)
+                            .where((a) => a['enabled'] == true)
+                            .toList();
+                    return LayoutBuilder(builder: (context, constraints) {
+                      final width = (constraints.maxWidth - 2 * 12) / 3;
+                      return Wrap(
+                        spacing: 12,
+                        runSpacing: 12,
+                        children: [
+                          for (final avatar in avatars)
+                            SizedBox(
+                              width: width,
+                              child: _AvatarOption(
+                                id: avatar['id'] as String,
+                                label: avatar['name'] as String? ?? '',
+                                selected: _prefs.signingAvatar == avatar['id'],
+                                onTap: () => _update(() => _prefs
+                                    .signingAvatar = avatar['id'] as String),
+                              ),
+                            ),
+                        ],
+                      );
+                    });
+                  },
+                ),
+              ),
+            ],
             _Section(
               title: tr('Langue de l’interface', 'Interface language'),
               child: SizedBox(
@@ -146,6 +165,20 @@ class _PreferencesScreenState extends State<PreferencesScreen> {
                   selected: {_prefs.themeMode},
                   onSelectionChanged: (value) =>
                       _update(() => _prefs.themeMode = value.first),
+                ),
+              ),
+            ),
+            _Section(
+              title: tr('Serveur de reconnaissance', 'Recognition server'),
+              description: tr(
+                  'Trouvé automatiquement sur votre Wi-Fi ; adresse modifiable.',
+                  'Found automatically on your Wi-Fi; address can be changed.'),
+              child: SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () => showServerSettings(context),
+                  icon: const Icon(Icons.dns_outlined),
+                  label: Text(tr('Vérifier ou modifier', 'Check or change')),
                 ),
               ),
             ),

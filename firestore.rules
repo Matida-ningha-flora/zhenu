@@ -158,11 +158,16 @@ service cloud.firestore {
         && request.resource.data.title.size() <= 80;
 
       allow update: if signedIn() && (
-        // Participant : dernier message, lecture, présence, invitations.
+        // Participant : dernier message, lecture, présence, invitations,
+        // son propre profil (sourd, entendant, les deux).
         (isParticipant() && resource.data.active == true
           && changedOnly(['lastMessage', 'lastSenderName', 'lastMessageAt',
-                          'lastRead', 'presence', 'invitedEmails'])
-          && onlyMyKey('lastRead') && onlyMyKey('presence'))
+                          'lastRead', 'presence', 'invitedEmails',
+                          'participantProfiles'])
+          && onlyMyKey('lastRead') && onlyMyKey('presence')
+          && onlyMyKey('participantProfiles')
+          && request.resource.data.get('participantProfiles', {})
+              .get(me(), 'both') in ['deaf', 'hearing', 'both'])
 
         // Rejoindre (code ou invitation) : s'ajouter soi-même uniquement.
         || (resource.data.active == true && !isParticipant()

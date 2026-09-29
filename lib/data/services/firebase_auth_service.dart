@@ -79,15 +79,20 @@ class FirebaseAuthService {
   }
 
   /// Inscription publique : toujours un compte utilisateur.
+  ///
+  /// [userType] : `deaf` (sourd / malentendant), `hearing` (entendant) ou
+  /// `both`.
   Future<Map<String, dynamic>?> register({
     required String name,
     required String email,
     required String password,
+    String userType = 'both',
   }) async {
     final cleanEmail = email.trim().toLowerCase();
     final profile = <String, dynamic>{
       'name': name.trim(),
       'email': cleanEmail,
+      'userType': userType,
       'role': roleUser,
       'level': 1,
       'xp': 0,
@@ -249,6 +254,38 @@ class FirebaseAuthService {
     } catch (e) {
       debugPrint('Session Firebase indisponible : $e');
       return null;
+    }
+  }
+
+  /// Enregistre le profil (sourd, entendant, les deux) dans le compte, pour
+  /// le retrouver sur tous les appareils.
+  Future<void> updateUserType(String userType) async {
+    final prefs = await SharedPreferences.getInstance();
+    final local = prefs.getString(_localSessionKey);
+    if (local != null) {
+      final profile = Map<String, dynamic>.from(jsonDecode(local) as Map);
+      profile['userType'] = userType;
+      await _saveLocalSession(profile);
+      final users = await _localUsers();
+      final key = (profile['email'] as String? ?? '').toLowerCase();
+      if (users[key] is Map) {
+        users[key] = {
+          ...Map<String, dynamic>.from(users[key] as Map),
+          'userType': userType
+        };
+        await prefs.setString(_localUsersKey, jsonEncode(users));
+      }
+      return;
+    }
+    if (isFirebaseConfigured && _auth.currentUser != null) {
+      try {
+        await _firestore
+            .collection('users')
+            .doc(_auth.currentUser!.uid)
+            .set({'userType': userType}, SetOptions(merge: true));
+      } catch (e) {
+        debugPrint('Profil non synchronisé : $e');
+      }
     }
   }
 

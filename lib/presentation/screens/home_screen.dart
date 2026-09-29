@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/constants/app_colors.dart';
 import '../../core/l10n/tr.dart';
+import '../../core/preferences/app_preferences.dart';
 import '../../data/services/notification_center.dart';
 import '../../data/services/translation_history_service.dart';
 import '../widgets/lsf_explain_button.dart';
@@ -203,23 +204,31 @@ class _PrimaryActions extends StatelessWidget {
           IntrinsicHeight(
             child:
                 Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              Expanded(
-                child: _HeroButton(
-                  icon: Icons.front_hand_rounded,
-                  title: tr('Je signe', 'I sign'),
-                  subtitle: tr('LSF → texte et voix', 'LSF → text & speech'),
-                  onTap: () => onOpen(TranslatorMode.sign),
+              // L'action propre au profil vient en premier.
+              for (final (i, mode)
+                  in (AppPreferences.instance.userProfile == 'hearing'
+                          ? [TranslatorMode.speech, TranslatorMode.sign]
+                          : [TranslatorMode.sign, TranslatorMode.speech])
+                      .indexed) ...[
+                if (i > 0) const SizedBox(width: 12),
+                Expanded(
+                  child: mode == TranslatorMode.sign
+                      ? _HeroButton(
+                          icon: Icons.front_hand_rounded,
+                          title: tr('Je signe', 'I sign'),
+                          subtitle:
+                              tr('LSF → texte et voix', 'LSF → text & speech'),
+                          onTap: () => onOpen(TranslatorMode.sign),
+                        )
+                      : _HeroButton(
+                          icon: Icons.mic_rounded,
+                          title: tr('Je parle', 'I speak'),
+                          subtitle:
+                              tr('Voix ou texte → LSF', 'Voice or text → LSF'),
+                          onTap: () => onOpen(TranslatorMode.speech),
+                        ),
                 ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _HeroButton(
-                  icon: Icons.mic_rounded,
-                  title: tr('Je parle', 'I speak'),
-                  subtitle: tr('Voix ou texte → LSF', 'Voice or text → LSF'),
-                  onTap: () => onOpen(TranslatorMode.speech),
-                ),
-              ),
+              ],
             ]),
           ),
         ],

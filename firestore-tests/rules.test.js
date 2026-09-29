@@ -168,6 +168,14 @@ describe('conversations à distance', () => {
     await assertFails(updateDoc(doc(paul(), 'conversations/r1'), { title: 'Piraté' }));
   });
 
+  test('profil (sourd, entendant) : chacun indique seulement le sien', async () => {
+    await seed('conversations/r1', { ...room, participants: ['awa', 'paul'] });
+    await assertSucceeds(updateDoc(doc(paul(), 'conversations/r1'), { 'participantProfiles.paul': 'deaf' }));
+    await assertFails(updateDoc(doc(paul(), 'conversations/r1'), { 'participantProfiles.awa': 'hearing' }));
+    await assertFails(updateDoc(doc(paul(), 'conversations/r1'), { 'participantProfiles.paul': 'pirate' }));
+    await assertFails(updateDoc(doc(eve(), 'conversations/r1'), { 'participantProfiles.eve': 'deaf' }));
+  });
+
   test('listes : participants et invités seulement', async () => {
     await seed('conversations/r1', room);
     const q = (db, field, value) => getDocs(query(collection(db, 'conversations'), where(field, 'array-contains', value)));

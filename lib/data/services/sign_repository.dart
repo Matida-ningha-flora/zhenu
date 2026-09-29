@@ -5,16 +5,31 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../constants/lsf_signs.dart';
 import 'cloud.dart';
+import 'lsf_grammar.dart';
 
-/// Un élément de traduction texte ➔ LSF : un signe du dictionnaire, ou un mot
-/// à épeler en dactylologie lorsqu'aucun signe n'existe.
+/// Un élément de traduction texte ➔ LSF : un signe du dictionnaire, un
+/// pointage (pronom), ou un mot à épeler en dactylologie lorsqu'aucun signe
+/// n'existe.
 class SignToken {
   final String word;
   final Map<String, dynamic>? sign;
 
-  const SignToken(this.word, this.sign);
+  /// Pronom signé par un pointage (vers soi, vers l'autre…).
+  final PointTarget? point;
+
+  /// Expression du visage de la phrase (question, négation).
+  final LsfExpression expression;
+
+  /// Phrase niée : la tête fait « non » pendant le signe.
+  final bool negated;
+
+  const SignToken(this.word, this.sign,
+      {this.point,
+      this.expression = LsfExpression.neutral,
+      this.negated = false});
 
   bool get isFingerspelled => sign == null;
+  bool get isPointing => sign?['pointing'] == true;
   String get fingerspelling => word.toUpperCase().split('').join(' - ');
 }
 
@@ -233,40 +248,67 @@ class SignRepository {
     'and',
   };
 
-  /// Découpe une phrase en signes LSF. Les expressions de plusieurs mots
-  /// présentes dans le dictionnaire sont reconnues avant les mots isolés.
+  /// Signes de remplacement pour les marqueurs grammaticaux.
+  static const _alternatives = {
+    'fini': ['fini', 'finir', 'terminer', 'fin'],
+    'futur': ['futur', 'plus tard', 'bientot'],
+    'pas': ['pas', 'non'],
+    'plus': ['plus jamais', 'jamais', 'pas'],
+    'aucun': ['aucun', 'rien', 'pas'],
+  };
+
+  static const _pointDescriptions = {
+    PointTarget.me: 'Index pointé vers sa propre poitrine.',
+    PointTarget.you: 'Index pointé vers la personne à qui l’on parle.',
+    PointTarget.other:
+        'Index pointé sur le côté, vers la personne dont on parle.',
+    PointTarget.we: 'Index qui décrit un arc entre soi et l’autre.',
+    PointTarget.youPlural: 'Index qui balaie les personnes en face.',
+    PointTarget.them:
+        'Index qui balaie le côté, vers les personnes dont on parle.',
+  };
+
+  /// Traduit un texte français en LSF : ordre de la LSF (temps, lieu,
+  /// personnes, action), sans mots grammaticaux du français, pronoms
+  /// pointés et expressions du visage (voir [LsfGrammar]).
   /// [animated] : signes animés disponibles sur le serveur (clés
   /// normalisées « AU_REVOIR »), reconnus même s'ils sont absents du
   /// dictionnaire embarqué.
   static List<SignToken> translateText(
       String text, List<Map<String, dynamic>> signs,
       {Set<String> animated = const {}}) {
-    String key(String phrase) => phrase.toUpperCase().replaceAll(' ', '_');
-    final words = normalize(text.replaceAll("'", ' '))
-        .split(' ')
-        .where((w) => w.isNotEmpty)
-        .toList();
+    String key(String phrase) =>
+        normalize(phrase).toUpperCase().replaceAll(RegExp(r"[\s'-]+"), '_');
+    Map<String, dynamic>? lookup(String phrase) =>
+        findByWord(signs, phrase) ??
+        (animated.contains(key(phrase))
+            ? {'word': phrase.toUpperCase(), 'animatedOnly': true}
+            : null);
+    bool known(String phrase) => lookup(phrase) != null;
+
     final tokens = <SignToken>[];
-    var i = 0;
-    while (i < words.length) {
-      Map<String, dynamic>? match;
-      var span = 1;
-      for (var size = 3; size >= 1 && match == null; size--) {
-        if (i + size > words.length) continue;
-        final phrase = words.sublist(i, i + size).join(' ');
-        match = findByWord(signs, phrase) ??
-            (animated.contains(key(phrase))
-                ? {'word': phrase.toUpperCase(), 'animatedOnly': true}
-                : null);
-        if (match != null) span = size;
+    for (final unit in LsfGrammar.translate(text, known)) {
+      final options = _alternatives[unit.gloss] ?? [unit.gloss];
+      String word = unit.gloss;
+      Map<String, dynamic>? sign;
+      for (final option in options) {
+        sign = lookup(option);
+        if (sign != null) {
+          word = option;
+          break;
+        }
       }
-      final word = words.sublist(i, i + span).join(' ');
-      if (match != null) {
-        tokens.add(SignToken(word, match));
-      } else if (!_stopWords.contains(word)) {
-        tokens.add(SignToken(word, null));
+      final point = unit.point;
+      if (sign == null && point != null) {
+        sign = {
+          'word': unit.gloss.toUpperCase(),
+          'pointing': true,
+          'gestureSummary': _pointDescriptions[point],
+        };
       }
-      i += span;
+      if (sign == null && _stopWords.contains(word)) continue;
+      tokens.add(SignToken(word, sign,
+          point: point, expression: unit.expression, negated: unit.negated));
     }
     return tokens;
   }

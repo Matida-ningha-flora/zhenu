@@ -4,8 +4,10 @@ import '../../core/constants/app_colors.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/l10n/tr.dart';
+import '../../core/preferences/app_preferences.dart';
 import '../../data/services/admin_data_service.dart';
 import '../../data/services/firebase_auth_service.dart';
+import '../../data/services/sign_media_service.dart';
 import '../../data/services/sign_repository.dart';
 import '../../data/services/voice_services.dart';
 import '../widgets/lsf_explain_button.dart';
@@ -24,6 +26,9 @@ class DictionaryScreen extends StatefulWidget {
 }
 
 class _DictionaryScreenState extends State<DictionaryScreen> {
+  /// Catégorie des signes filmés du serveur (vidéo, avatar, landmarks).
+  static const videoCategory = 'Signes filmés';
+
   static const handshapes = [
     'Main plate',
     'Poing',
@@ -82,13 +87,39 @@ class _DictionaryScreenState extends State<DictionaryScreen> {
     ]);
     if (!mounted) return;
     setState(() {
-      _signs = (results[0] as List<Map<String, dynamic>>)
-        ..sort((a, b) =>
-            (a['word'] as String? ?? '').compareTo(b['word'] as String? ?? ''));
+      _signs = _sorted(results[0] as List<Map<String, dynamic>>);
       _favorites = results[1] as Set<String>;
       _loading = false;
     });
+    // Signes filmés du serveur EchoSign : vidéo, avatar et landmarks.
+    final media = SignMediaService.instance;
+    await media.ensureLoaded();
+    if (!mounted || media.keys.isEmpty) return;
+    final known = {
+      for (final sign in _signs)
+        SignMediaService.normalize(SignRepository.headword(sign))
+    };
+    setState(() {
+      _signs = _sorted([
+        ..._signs,
+        for (final key in media.keys)
+          if (!known.contains(key) && !key.startsWith('NS_'))
+            {
+              'id': 'video_$key',
+              'word': key.replaceAll('_', ' '),
+              'category': videoCategory,
+              'gestureSummary': tr('Vidéo, avatar animé et landmarks',
+                  'Video, animated avatar and landmarks'),
+              'animatedOnly': true,
+            },
+      ]);
+    });
   }
+
+  static List<Map<String, dynamic>> _sorted(List<Map<String, dynamic>> signs) =>
+      signs
+        ..sort((a, b) =>
+            (a['word'] as String? ?? '').compareTo(b['word'] as String? ?? ''));
 
   void _onSearch(String value) {
     setState(() => _query = value);
@@ -285,7 +316,10 @@ class _DictionaryScreenState extends State<DictionaryScreen> {
                         onSelected: (_) => setState(() => _category = null),
                       ),
                     ),
-                    for (final category in SignRepository.categories)
+                    for (final category in [
+                      ...SignRepository.categories,
+                      videoCategory
+                    ])
                       Padding(
                         padding: const EdgeInsets.only(right: 8),
                         child: ChoiceChip(
@@ -402,8 +436,11 @@ class _SignCard extends StatelessWidget {
             color: theme.colorScheme.primaryContainer,
             borderRadius: BorderRadius.circular(14),
           ),
-          child: Text(sign['gestureEmoji'] as String? ?? '🤟',
-              style: const TextStyle(fontSize: 26)),
+          child: sign['animatedOnly'] == true
+              ? Icon(Icons.smart_display_rounded,
+                  color: theme.colorScheme.onPrimaryContainer)
+              : Text(sign['gestureEmoji'] as String? ?? '🤟',
+                  style: const TextStyle(fontSize: 26)),
         ),
         const SizedBox(width: 14),
         Expanded(
@@ -456,6 +493,11 @@ class SignDetailScreen extends StatefulWidget {
 class _SignDetailScreenState extends State<SignDetailScreen> {
   late bool _favorite = widget.favorite;
 
+  /// Affichage du signe : vidéo, avatar ou landmarks.
+  late String _format = AppPreferences.instance.responseFormat == 'text'
+      ? 'video'
+      : AppPreferences.instance.responseFormat;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -507,7 +549,36 @@ class _SignDetailScreenState extends State<SignDetailScreen> {
                   color: theme.colorScheme.onSurfaceVariant),
           ]),
           const SizedBox(height: 16),
-          LsfRenderer(text: word, stageHeight: 220, autoplay: false),
+          SizedBox(
+            width: double.infinity,
+            child: SegmentedButton<String>(
+              showSelectedIcon: false,
+              segments: [
+                ButtonSegment(
+                    value: 'video',
+                    icon: const Icon(Icons.smart_display_outlined),
+                    label: Text(tr('Vidéo', 'Video'))),
+                ButtonSegment(
+                    value: 'avatar',
+                    icon: const Icon(Icons.accessibility_new_rounded),
+                    label: Text(tr('Avatar', 'Avatar'))),
+                ButtonSegment(
+                    value: 'landmarks',
+                    icon: const Icon(Icons.scatter_plot_outlined),
+                    label: Text(tr('Landmarks', 'Landmarks'))),
+              ],
+              selected: {_format},
+              onSelectionChanged: (value) =>
+                  setState(() => _format = value.first),
+            ),
+          ),
+          const SizedBox(height: 12),
+          LsfRenderer(
+              key: ValueKey(_format),
+              text: word.split('(').first,
+              format: _format,
+              stageHeight: 260,
+              compact: true),
           const SizedBox(height: 20),
           Text(sign['description'] as String? ?? '',
               style: theme.textTheme.bodyLarge),

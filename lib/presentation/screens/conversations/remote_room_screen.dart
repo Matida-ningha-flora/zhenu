@@ -16,6 +16,7 @@ import '../../widgets/auth_layout.dart';
 import '../../widgets/lsf_renderer.dart';
 import '../../widgets/reception_modes.dart';
 import '../../widgets/ui_kit.dart';
+import '../../widgets/user_type_selector.dart';
 import '../translator_screen.dart';
 import 'group_conversations.dart';
 
@@ -73,8 +74,11 @@ class _RemoteRoomScreenState extends State<RemoteRoomScreen> {
     SharedPreferences.getInstance().then((prefs) {
       if (mounted) {
         setState(() {
-          _autoSpeak = prefs.getBool(_autoSpeakKey) ?? false;
-          _bySign = prefs.getString(_composeKey) == 'sign';
+          final profile = AppPreferences.instance.userProfile;
+          // Entendant : les messages reçus sont lus à voix haute par défaut.
+          _autoSpeak = prefs.getBool(_autoSpeakKey) ?? profile == 'hearing';
+          _bySign = profile == 'deaf' ||
+              profile == 'both' && prefs.getString(_composeKey) == 'sign';
         });
       }
     });
@@ -83,6 +87,7 @@ class _RemoteRoomScreenState extends State<RemoteRoomScreen> {
     });
     _messagesSub = _service.messages(widget.roomId).listen(_onMessages);
     _service.heartbeat(widget.roomId).catchError((_) {});
+    _service.shareUserType(widget.roomId, AppPreferences.instance.userProfile);
     _heartbeat = Timer.periodic(const Duration(seconds: 30),
         (_) => _service.heartbeat(widget.roomId).catchError((_) {}));
     _input.addListener(() => setState(() {}));
@@ -333,9 +338,13 @@ class _RemoteRoomScreenState extends State<RemoteRoomScreen> {
                   title: Text(id == _uid
                       ? '${room.names[id] ?? ''} (${tr('vous', 'you')})'
                       : room.names[id] ?? '?'),
-                  subtitle: Text(id == room.createdBy
-                      ? tr('Organisateur', 'Host')
-                      : tr('Participant', 'Participant')),
+                  subtitle: Text([
+                    id == room.createdBy
+                        ? tr('Organisateur', 'Host')
+                        : tr('Participant', 'Participant'),
+                    if (UserType.of(room.userTypes[id]) != null)
+                      '${UserType.of(room.userTypes[id])!.emoji} ${UserType.of(room.userTypes[id])!.title}',
+                  ].join(' · ')),
                   trailing: StatusPill(
                     label: room.isOnline(id)
                         ? tr('En ligne', 'Online')
@@ -417,13 +426,14 @@ class _RemoteRoomScreenState extends State<RemoteRoomScreen> {
               }
             },
             itemBuilder: (context) => [
-              PopupMenuItem(
-                value: 'reception',
-                child: ListTile(
-                    leading: const Icon(Icons.tune_rounded),
-                    title: Text(tr(
-                        'Recevoir les messages en…', 'Receive messages as…'))),
-              ),
+              if (AppPreferences.instance.receivesSigns)
+                PopupMenuItem(
+                  value: 'reception',
+                  child: ListTile(
+                      leading: const Icon(Icons.tune_rounded),
+                      title: Text(tr('Recevoir les messages en…',
+                          'Receive messages as…'))),
+                ),
               PopupMenuItem(
                 value: 'code',
                 child: ListTile(
@@ -484,6 +494,7 @@ class _RemoteRoomScreenState extends State<RemoteRoomScreen> {
             // En mode « texte », les bulles suffisent.
             if (!_showLsf ||
                 message == null ||
+                !AppPreferences.instance.receivesSigns ||
                 AppPreferences.instance.responseFormat == 'text') {
               return const SizedBox.shrink();
             }
@@ -546,14 +557,17 @@ class _RemoteRoomScreenState extends State<RemoteRoomScreen> {
                       padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
                       itemCount: _messages.length,
                       itemBuilder: (context, i) => _Bubble(
+                        userType: _room?.userTypes[_messages[i].senderId],
                         message: _messages[i],
                         isMe: _messages[i].senderId == _uid,
                         showName: i == 0 ||
                             _messages[i - 1].senderId != _messages[i].senderId,
-                        onShowLsf: () => setState(() {
-                          _lsfMessage = _messages[i];
-                          _showLsf = true;
-                        }),
+                        onShowLsf: AppPreferences.instance.receivesSigns
+                            ? () => setState(() {
+                                  _lsfMessage = _messages[i];
+                                  _showLsf = true;
+                                })
+                            : null,
                       ),
                     ),
         ),
@@ -564,29 +578,32 @@ class _RemoteRoomScreenState extends State<RemoteRoomScreen> {
             child: Padding(
               padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
               child: Column(mainAxisSize: MainAxisSize.min, children: [
-                SizedBox(
-                  width: double.infinity,
-                  child: SegmentedButton<bool>(
-                    showSelectedIcon: false,
-                    style: SegmentedButton.styleFrom(
-                        visualDensity: VisualDensity.compact),
-                    segments: [
-                      ButtonSegment(
-                          value: false,
-                          icon: const Icon(Icons.keyboard_alt_outlined),
-                          label: Text(tr('Texte', 'Text'))),
-                      ButtonSegment(
-                          value: true,
-                          icon: const Icon(Icons.front_hand_outlined),
-                          label: Text(tr('Signes', 'Signs'))),
-                    ],
-                    selected: {_bySign},
-                    onSelectionChanged:
-                        closed ? null : (v) => _setComposeMode(v.first),
+                // Texte | Signes : seulement si l'utilisateur utilise les deux.
+                if (AppPreferences.instance.userProfile == 'both') ...[
+                  SizedBox(
+                    width: double.infinity,
+                    child: SegmentedButton<bool>(
+                      showSelectedIcon: false,
+                      style: SegmentedButton.styleFrom(
+                          visualDensity: VisualDensity.compact),
+                      segments: [
+                        ButtonSegment(
+                            value: false,
+                            icon: const Icon(Icons.keyboard_alt_outlined),
+                            label: Text(tr('Texte', 'Text'))),
+                        ButtonSegment(
+                            value: true,
+                            icon: const Icon(Icons.front_hand_outlined),
+                            label: Text(tr('Signes', 'Signs'))),
+                      ],
+                      selected: {_bySign},
+                      onSelectionChanged:
+                          closed ? null : (v) => _setComposeMode(v.first),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 8),
-                if (_bySign)
+                  const SizedBox(height: 8),
+                ],
+                if (_bySign && AppPreferences.instance.signs)
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton.icon(
@@ -656,13 +673,15 @@ class _Bubble extends StatelessWidget {
   final RoomMessage message;
   final bool isMe;
   final bool showName;
-  final VoidCallback onShowLsf;
+  final VoidCallback? onShowLsf;
+  final String? userType;
 
   const _Bubble({
     required this.message,
     required this.isMe,
     required this.showName,
     required this.onShowLsf,
+    this.userType,
   });
 
   @override
@@ -697,7 +716,10 @@ class _Bubble extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (showName && !isMe)
-                Text(message.senderName,
+                Text(
+                    UserType.of(userType) == null
+                        ? message.senderName
+                        : '${UserType.of(userType)!.emoji} ${message.senderName}',
                     style: theme.textTheme.labelMedium
                         ?.copyWith(color: participantColor(message.senderId))),
               Padding(
@@ -722,13 +744,14 @@ class _Bubble extends StatelessWidget {
                     icon: const Icon(Icons.volume_up_outlined, size: 18),
                   )
                 else ...[
-                  IconButton(
-                    visualDensity: VisualDensity.compact,
-                    tooltip: tr('Afficher en LSF', 'Show in LSF'),
-                    onPressed: onShowLsf,
-                    icon: Icon(Icons.sign_language_outlined,
-                        size: 18, color: theme.colorScheme.primary),
-                  ),
+                  if (onShowLsf != null)
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      tooltip: tr('Afficher en LSF', 'Show in LSF'),
+                      onPressed: onShowLsf,
+                      icon: Icon(Icons.sign_language_outlined,
+                          size: 18, color: theme.colorScheme.primary),
+                    ),
                   IconButton(
                     visualDensity: VisualDensity.compact,
                     tooltip: tr('Écouter', 'Play'),

@@ -125,14 +125,14 @@ class EchoSignApiClient {
 
   /// Interroge `GET /health` ; renvoie `null` si le serveur est injoignable.
   static Future<EchoSignHealth?> checkHealth(String address,
-      {http.Client? client}) async {
+      {http.Client? client,
+      Duration timeout = const Duration(seconds: 6)}) async {
     final urls = resolve(address);
     if (urls == null) return null;
     final started = DateTime.now();
     final httpClient = client ?? http.Client();
     try {
-      final response =
-          await httpClient.get(urls.health).timeout(const Duration(seconds: 6));
+      final response = await httpClient.get(urls.health).timeout(timeout);
       if (response.statusCode != 200) return null;
       final json = jsonDecode(response.body) as Map<String, dynamic>;
       return EchoSignHealth(

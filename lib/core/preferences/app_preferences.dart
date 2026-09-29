@@ -7,12 +7,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// - [signingAvatar] : style de l'avatar signant
 /// - [writtenLanguage] : langue de l'interface (`Français` ou `English`)
 /// - [themeMode] : thème clair ou sombre
+/// - [userProfile] : `deaf` (sourd / malentendant), `hearing` (entendant)
+///   ou `both` ; l'application montre à chacun ce qui le concerne
 class AppPreferences extends ChangeNotifier {
   AppPreferences._();
 
   static final AppPreferences instance = AppPreferences._();
 
   static const responseFormats = ['avatar', 'video', 'landmarks', 'text'];
+  static const profiles = ['deaf', 'hearing', 'both'];
 
   static const _responseKey = 'response_format';
   static const _avatarKey = 'signing_avatar';
@@ -20,8 +23,10 @@ class AppPreferences extends ChangeNotifier {
   static const _themeKey = 'theme_preference';
   static const _setupKey = 'preferences_completed';
   static const _onboardingKey = 'onboarding_seen';
+  static const _profileKey = 'user_profile';
 
   String responseFormat = 'avatar';
+  String userProfile = 'both';
   String signingAvatar = 'guide';
   String writtenLanguage = 'Français';
   ThemeMode themeMode = ThemeMode.light;
@@ -30,6 +35,18 @@ class AppPreferences extends ChangeNotifier {
   String _scope = 'global';
 
   bool get isEnglish => writtenLanguage == 'English';
+
+  /// Reçoit les messages des autres en langue des signes.
+  bool get receivesSigns => userProfile != 'hearing';
+
+  /// Reçoit les messages en texte et à voix haute.
+  bool get receivesSpeech => userProfile != 'deaf';
+
+  /// S'exprime en signant devant la caméra.
+  bool get signs => userProfile != 'hearing';
+
+  /// S'exprime au clavier ou à la voix.
+  bool get speaks => userProfile != 'deaf';
 
   Future<void> loadForUser(String identifier) async {
     _scope =
@@ -45,6 +62,8 @@ class AppPreferences extends ChangeNotifier {
     responseFormat =
         _migrateResponse(prefs.getString(_key(_responseKey))) ?? responseFormat;
     signingAvatar = prefs.getString(_key(_avatarKey)) ?? signingAvatar;
+    final profile = prefs.getString(_key(_profileKey));
+    if (profiles.contains(profile)) userProfile = profile!;
     // La langue d'interface reste celle de l'appareil tant que le compte
     // n'en a pas choisi une autre.
     writtenLanguage = prefs.getString(_key(_languageKey)) ??
@@ -60,6 +79,7 @@ class AppPreferences extends ChangeNotifier {
 
   void _resetDefaults() {
     responseFormat = 'avatar';
+    userProfile = 'both';
     signingAvatar = 'guide';
     writtenLanguage = 'Français';
     themeMode = ThemeMode.light;
@@ -78,6 +98,7 @@ class AppPreferences extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_key(_responseKey), responseFormat);
     await prefs.setString(_key(_avatarKey), signingAvatar);
+    await prefs.setString(_key(_profileKey), userProfile);
     await prefs.setString(_key(_languageKey), writtenLanguage);
     await prefs.setString(
         _key(_themeKey), themeMode == ThemeMode.dark ? 'dark' : 'light');

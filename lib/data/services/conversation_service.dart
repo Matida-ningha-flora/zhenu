@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 
 import 'cloud.dart';
 
@@ -22,6 +23,9 @@ class Room {
   final Map<String, DateTime> lastRead;
   final Map<String, DateTime> presence;
 
+  /// Profil de chaque participant (`deaf`, `hearing`, `both`).
+  final Map<String, String> userTypes;
+
   const Room({
     required this.id,
     required this.title,
@@ -37,6 +41,7 @@ class Room {
     required this.createdAt,
     required this.lastRead,
     required this.presence,
+    this.userTypes = const {},
   });
 
   static DateTime? _date(Object? value) => switch (value) {
@@ -75,6 +80,9 @@ class Room {
       createdAt: _date(data['createdAt']),
       lastRead: _dates(data['lastRead']),
       presence: _dates(data['presence']),
+      userTypes: Map<String, String>.from(
+          (data['participantProfiles'] as Map? ?? {})
+              .map((k, v) => MapEntry(k.toString(), v.toString()))),
     );
   }
 
@@ -344,6 +352,17 @@ class ConversationService {
       .update({'lastRead.$uid': FieldValue.serverTimestamp()});
 
   /// Signale que l'utilisateur est présent dans le salon.
+  /// Indique aux autres participants mon profil (sourd, entendant…).
+  /// Sans les règles de sécurité à jour, l'écriture est refusée : le salon
+  /// fonctionne quand même, sans l'indication.
+  Future<void> shareUserType(String roomId, String userType) async {
+    try {
+      await _rooms.doc(roomId).update({'participantProfiles.$uid': userType});
+    } catch (e) {
+      debugPrint('Profil non partagé dans le salon : $e');
+    }
+  }
+
   Future<void> heartbeat(String roomId) => _rooms
       .doc(roomId)
       .update({'presence.$uid': FieldValue.serverTimestamp()});

@@ -20,7 +20,8 @@ void openHomeFor(BuildContext context, Map<String, dynamic> user) {
   final page = FirebaseAuthService.normalizeRole(user['role']) ==
           FirebaseAuthService.roleAdmin
       ? AdminDashboard(email: email)
-      : UserDashboard(email: email, name: name);
+      : UserDashboard(
+          email: email, name: name, userType: user['userType'] as String?);
   Navigator.of(context).pushAndRemoveUntil(fadeRoute(page), (_) => false);
 }
 

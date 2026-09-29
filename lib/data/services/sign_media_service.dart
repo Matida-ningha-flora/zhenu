@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -6,7 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/sign_motion.dart';
 import 'echosign_api_client.dart';
-import 'sign_recognition_service.dart';
+import 'echosign_server.dart';
 
 /// Animations GIF des signes servies par le serveur EchoSign
 /// (`GET /media/index`, `GET /media/gif/{signe}`).
@@ -81,8 +82,15 @@ class SignMediaService {
     return _loading ??= _load().whenComplete(() => _loading = null);
   }
 
+  /// Recharge la liste (serveur trouvé à une nouvelle adresse).
+  Future<void> refresh() {
+    _loadedAt = null;
+    return ensureLoaded();
+  }
+
   Future<void> _load() async {
-    final address = await SignRecognitionService.serverAddress();
+    final address =
+        await EchoSignServer.locate() ?? await EchoSignServer.preferred();
     final urls = EchoSignApiClient.resolve(address);
     final prefs = await SharedPreferences.getInstance();
     if (urls == null) {
@@ -111,9 +119,44 @@ class SignMediaService {
       _loadedAt = DateTime.now();
     } catch (e) {
       // Serveur injoignable : nouvelle tentative dans 30 secondes au plus tôt.
+      EchoSignServer.invalidate();
       _loadedAt =
           DateTime.now().subtract(const Duration(minutes: 9, seconds: 30));
       debugPrint('Animations des signes indisponibles : $e');
+    }
+  }
+
+  final Map<String, ({Uint8List bytes, Duration duration})> _clips = {};
+
+  /// Vidéo (GIF) d'un signe et sa durée réelle, pour enchaîner les signes
+  /// sans couper ni répéter une vidéo.
+  Future<({Uint8List bytes, Duration duration})?> gifClip(String word) async {
+    if (_base.isEmpty || _keys.isEmpty) await ensureLoaded();
+    final url = gifUrl(word);
+    if (url == null) return null;
+    final key = normalize(word);
+    final cached = _clips[key];
+    if (cached != null) return cached;
+    try {
+      final response = await http.get(url).timeout(const Duration(seconds: 15));
+      if (response.statusCode != 200) return null;
+      final bytes = response.bodyBytes;
+      var total = Duration.zero;
+      final codec = await ui.instantiateImageCodec(bytes);
+      for (var i = 0; i < codec.frameCount; i++) {
+        final frame = await codec.getNextFrame();
+        total += frame.duration;
+        frame.image.dispose();
+      }
+      codec.dispose();
+      if (total < const Duration(milliseconds: 500)) {
+        total = const Duration(milliseconds: 1500);
+      }
+      if (_clips.length > 30) _clips.remove(_clips.keys.first);
+      return _clips[key] = (bytes: bytes, duration: total);
+    } catch (e) {
+      debugPrint('Vidéo indisponible pour $key : $e');
+      return null;
     }
   }
 
@@ -123,9 +166,11 @@ class SignMediaService {
   /// Mouvements d'un signe pour l'avatar animé (`/media/landmarks/{signe}`).
   /// Le premier appel pour un signe peut prendre une dizaine de secondes
   /// (extraction côté serveur), les suivants sont immédiats.
-  Future<SignMotion?> motion(String word) {
+  Future<SignMotion?> motion(String word) async {
+    // Serveur pas encore trouvé : on attend la liste des signes.
+    if (_base.isEmpty || _keys.isEmpty) await ensureLoaded();
     final key = normalize(word);
-    if (_base.isEmpty || !_keys.contains(key)) return Future.value(null);
+    if (_base.isEmpty || !_keys.contains(key)) return null;
     final cached = _motions[key];
     if (cached != null) return Future.value(cached);
     return _pendingMotions[key] ??=

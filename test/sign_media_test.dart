@@ -54,16 +54,15 @@ void main() {
     expect(tokens[2].sign!['animatedOnly'], isTrue);
   });
 
-  testWidgets('mode vidéo : le GIF de l’interprète est affiché',
+  testWidgets('mode vidéo : un seul cadre, le signe est chargé',
       (tester) async {
-    AppPreferences.instance
-      ..responseFormat = 'video'
-      ..signingAvatar = 'female';
+    AppPreferences.instance.responseFormat = 'video';
     await tester.pumpWidget(const MaterialApp(
         home: Scaffold(body: LsfRenderer(text: 'merci', autoplay: false))));
     await tester.pumpAndSettle();
-    final gif = tester.widget<SignGifView>(find.byType(SignGifView));
-    expect(gif.url.toString(), 'http://192.168.100.132:8000/media/gif/MERCI');
+    // Serveur de test injoignable : le cadre vidéo explique l'absence.
+    expect(find.text('MERCI'), findsWidgets);
+    expect(find.byType(SignGifView), findsNothing);
   });
 
   for (final (format, style) in [

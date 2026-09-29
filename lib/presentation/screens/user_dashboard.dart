@@ -20,7 +20,11 @@ class UserDashboard extends StatefulWidget {
   final String email;
   final String name;
 
-  const UserDashboard({super.key, required this.email, this.name = ''});
+  /// Profil enregistré dans le compte : `deaf`, `hearing` ou `both`.
+  final String? userType;
+
+  const UserDashboard(
+      {super.key, required this.email, this.name = '', this.userType});
 
   @override
   State<UserDashboard> createState() => _UserDashboardState();
@@ -29,7 +33,12 @@ class UserDashboard extends StatefulWidget {
 class _UserDashboardState extends State<UserDashboard> {
   int _index = 0;
   bool _ready = false;
-  final _translatorMode = ValueNotifier(TranslatorMode.sign);
+  // Onglet de traduction par défaut selon le profil (sourd : je signe ;
+  // entendant : je parle).
+  final _translatorMode = ValueNotifier(
+      AppPreferences.instance.userProfile == 'hearing'
+          ? TranslatorMode.speech
+          : TranslatorMode.sign);
   StreamSubscription<Map<String, dynamic>>? _notifications;
   Timer? _sessionTimer;
   int _sessionTimeoutMinutes = 30;
@@ -38,7 +47,17 @@ class _UserDashboardState extends State<UserDashboard> {
   void initState() {
     super.initState();
     TranslationHistoryService.useAccount(widget.email);
-    AppPreferences.instance.loadForUser(widget.email).whenComplete(() {
+    AppPreferences.instance.loadForUser(widget.email).whenComplete(() async {
+      final prefs = AppPreferences.instance;
+      final userType = widget.userType;
+      if (AppPreferences.profiles.contains(userType) &&
+          userType != prefs.userProfile) {
+        prefs.userProfile = userType!;
+        await prefs.save();
+      }
+      _translatorMode.value = prefs.userProfile == 'hearing'
+          ? TranslatorMode.speech
+          : TranslatorMode.sign;
       if (mounted) setState(() => _ready = true);
     });
     NotificationCenter.instance.start();

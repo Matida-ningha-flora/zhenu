@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/constants/app_colors.dart';
@@ -8,10 +9,10 @@ import '../../core/l10n/tr.dart';
 import '../../core/preferences/app_preferences.dart';
 import '../../data/services/sign_media_service.dart';
 import '../../data/services/sign_repository.dart';
+import '../../data/models/lsf_motion_synthesis.dart';
 import '../../data/models/sign_motion.dart';
-import 'avatar_portrait.dart';
+import '../../data/services/lsf_grammar.dart';
 import 'sign_avatar.dart';
-import 'sign_translation_gif.dart';
 
 /// Affiche un texte en LSF, signe par signe, dans le mode de réception choisi
 /// par l'utilisateur : avatar animé, vidéo (GIF d'interprète), landmarks ou
@@ -91,9 +92,13 @@ class _LsfRendererState extends State<LsfRenderer> {
   bool get _currentIsAnimated {
     final format = widget.format ?? AppPreferences.instance.responseFormat;
     final token = _tokens[_index];
-    return (format == 'avatar' || format == 'landmarks') &&
-        !token.isFingerspelled &&
-        SignMediaService.instance.has(token.word);
+    return (format == 'avatar' ||
+            format == 'landmarks' ||
+            format == 'video' ||
+            token.isPointing) &&
+        (token.isPointing ||
+            !token.isFingerspelled &&
+                SignMediaService.instance.has(token.word));
   }
 
   void _armTimer() {
@@ -159,13 +164,26 @@ class _LsfRendererState extends State<LsfRenderer> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        _GlossLine(tokens: _tokens, index: _index, onTap: _goTo),
+        const SizedBox(height: 8),
         AnimatedSwitcher(
-          duration: const Duration(milliseconds: 250),
+          duration: format == 'video'
+              ? Duration.zero
+              : const Duration(milliseconds: 250),
           child: KeyedSubtree(
             key: ValueKey('$format/$_index/${token.word}'),
             child: switch (format) {
               'text' => _TextStage(token: token),
-              'video' => _VideoStage(token: token, height: widget.stageHeight),
+              'video' => token.isPointing
+                  ? _MotionStage(
+                      token: token,
+                      height: widget.stageHeight,
+                      style: MotionStyle.avatar,
+                      onCycle: _advance)
+                  : _VideoStage(
+                      token: token,
+                      height: widget.stageHeight,
+                      onCycle: _advance),
               'landmarks' => _MotionStage(
                   token: token,
                   height: widget.stageHeight,
@@ -258,101 +276,37 @@ String _summary(SignToken token) => token.isFingerspelled
         token.sign!['description'] as String? ??
         '');
 
-class _AvatarStage extends StatelessWidget {
+/// Vidéo d'interprète : chaque signe est joué une fois en entier, puis la
+/// phrase continue avec le signe suivant, dans le même cadre.
+class _VideoStage extends StatefulWidget {
   final SignToken token;
   final double height;
-  const _AvatarStage({required this.token, required this.height});
+  final VoidCallback onCycle;
+  const _VideoStage(
+      {required this.token, required this.height, required this.onCycle});
 
   @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final avatar = AppPreferences.instance.signingAvatar;
-    final composite = Container(
-      height: height,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            theme.colorScheme.primaryContainer,
-            theme.colorScheme.secondaryContainer,
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(children: [
-        Stack(clipBehavior: Clip.none, children: [
-          SizedBox.square(
-              dimension: height * 0.5, child: AvatarPortrait(variant: avatar)),
-          Positioned(
-            right: -6,
-            bottom: -6,
-            child: Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surface,
-                shape: BoxShape.circle,
-                boxShadow: const [
-                  BoxShadow(color: Color(0x22000000), blurRadius: 8)
-                ],
-              ),
-              child: Text(
-                token.isFingerspelled
-                    ? '🤟'
-                    : token.sign!['gestureEmoji'] as String? ?? '🤟',
-                style: const TextStyle(fontSize: 26),
-              ),
-            ),
-          ),
-        ]),
-        const SizedBox(width: 20),
-        Expanded(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(token.word.toUpperCase(),
-                  style: theme.textTheme.headlineSmall
-                      ?.copyWith(color: theme.colorScheme.onPrimaryContainer)),
-              const SizedBox(height: 8),
-              Text(_summary(token),
-                  maxLines: 4,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodyMedium
-                      ?.copyWith(color: theme.colorScheme.onPrimaryContainer)),
-            ],
-          ),
-        ),
-      ]),
-    );
-    final gif = SignMediaService.instance.gifUrl(token.word);
-    if (gif != null) {
-      return SignGifView(
-          url: gif,
-          height: height,
-          label: token.word,
-          fallback: composite,
-          avatar: avatar);
-    }
-    return SignTranslationGif(
-        text: token.word,
-        variant: avatar,
-        size: height / 1.4,
-        fallback: composite);
-  }
+  State<_VideoStage> createState() => _VideoStageState();
 }
 
-class _VideoStage extends StatelessWidget {
-  final SignToken token;
-  final double height;
-  const _VideoStage({required this.token, required this.height});
+class _VideoStageState extends State<_VideoStage> {
+  late final Future<({Uint8List bytes, Duration duration})?> _clip =
+      widget.token.isFingerspelled
+          ? Future.value(null)
+          : SignMediaService.instance.gifClip(widget.token.word);
+  Timer? _end;
 
   @override
-  Widget build(BuildContext context) {
+  void dispose() {
+    _end?.cancel();
+    super.dispose();
+  }
+
+  Widget _placeholder(BuildContext context, {bool loading = false}) {
     final theme = Theme.of(context);
-    final placeholder = Container(
-      height: height,
+    final token = widget.token;
+    return Container(
+      height: widget.height,
       decoration: BoxDecoration(
         color: AppColors.stage,
         borderRadius: BorderRadius.circular(20),
@@ -361,46 +315,87 @@ class _VideoStage extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(
-            token.isFingerspelled
-                ? '🤟'
-                : token.sign!['gestureEmoji'] as String? ?? '🤟',
-            style: const TextStyle(fontSize: 48),
-          ),
+          if (loading)
+            const SizedBox.square(
+                dimension: 32,
+                child: CircularProgressIndicator(
+                    strokeWidth: 3, color: Colors.white))
+          else
+            Icon(Icons.videocam_off_outlined,
+                size: 36, color: Colors.white.withValues(alpha: 0.6)),
           const SizedBox(height: 12),
           Text(token.word.toUpperCase(),
               style: theme.textTheme.titleLarge?.copyWith(color: Colors.white)),
           const SizedBox(height: 6),
-          Text(_summary(token),
+          Text(
+              loading
+                  ? tr('Chargement de la vidéo…', 'Loading the video…')
+                  : _summary(token),
               textAlign: TextAlign.center,
               maxLines: 3,
               overflow: TextOverflow.ellipsis,
               style: theme.textTheme.bodyMedium
                   ?.copyWith(color: Colors.white.withValues(alpha: 0.75))),
-          const SizedBox(height: 12),
-          Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-            Icon(Icons.videocam_off_outlined,
-                size: 16, color: Colors.white.withValues(alpha: 0.6)),
-            const SizedBox(width: 6),
+          if (!loading) ...[
+            const SizedBox(height: 8),
             Text(
-                tr('Vidéo d’interprète non disponible pour ce signe',
-                    'Interpreter video not available for this sign'),
+                token.isFingerspelled
+                    ? tr('Épelé en dactylologie', 'Fingerspelled')
+                    : tr('Vidéo d’interprète non disponible pour ce signe',
+                        'Interpreter video not available for this sign'),
                 style: theme.textTheme.bodySmall
                     ?.copyWith(color: Colors.white.withValues(alpha: 0.6))),
-          ]),
+          ],
         ],
       ),
     );
-    final gif = SignMediaService.instance.gifUrl(token.word);
-    if (gif != null) {
-      return SignGifView(
-          url: gif, height: height, label: token.word, fallback: placeholder);
-    }
-    return SignTranslationGif(
-        text: token.word,
-        variant: 'video',
-        size: height / 1.4,
-        fallback: placeholder);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<({Uint8List bytes, Duration duration})?>(
+      future: _clip,
+      builder: (context, snapshot) {
+        final clip = snapshot.data;
+        if (clip == null) {
+          return _placeholder(context,
+              loading: snapshot.connectionState != ConnectionState.done);
+        }
+        // Signe suivant à la fin de la vidéo (une seule lecture).
+        _end ??= Timer(clip.duration, widget.onCycle);
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(20),
+          child: Container(
+            height: widget.height,
+            width: double.infinity,
+            color: AppColors.stage,
+            child: Stack(fit: StackFit.expand, children: [
+              Image.memory(clip.bytes,
+                  fit: BoxFit.contain,
+                  gaplessPlayback: true,
+                  semanticLabel: 'Signe LSF : ${widget.token.word}'),
+              Positioned(
+                left: 12,
+                bottom: 12,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.55),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(widget.token.word.toUpperCase(),
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13)),
+                ),
+              ),
+            ]),
+          ),
+        );
+      },
+    );
   }
 }
 
@@ -439,7 +434,9 @@ class _TextStage extends StatelessWidget {
                 sign['animatedOnly'] == true
                     ? tr('Animation disponible en mode Vidéo ou Avatar.',
                         'Animation available in Video or Avatar mode.')
-                    : sign['description'] as String? ?? '',
+                    : sign['description'] as String? ??
+                        sign['gestureSummary'] as String? ??
+                        '',
                 style: theme.textTheme.bodyMedium),
             for (var i = 0; i < steps.length; i++)
               Padding(
@@ -493,9 +490,19 @@ class _MotionStage extends StatefulWidget {
 class _MotionStageState extends State<_MotionStage> {
   late Future<SignMotion?> _motion = _load();
 
-  Future<SignMotion?> _load() => widget.token.isFingerspelled
-      ? Future.value(null)
-      : SignMediaService.instance.motion(widget.token.word);
+  Future<SignMotion?> _load() async {
+    final token = widget.token;
+    SignMotion? motion;
+    if (token.isPointing && token.point != null) {
+      motion = LsfMotionSynthesis.pointing(
+          token.point!, await LsfMotionSynthesis.neutral());
+    } else if (!token.isFingerspelled) {
+      motion = await SignMediaService.instance.motion(token.word);
+    }
+    if (motion == null) return null;
+    // Expression du visage de la phrase (question, négation).
+    return LsfMotionSynthesis.express(motion, token.expression, token.negated);
+  }
 
   @override
   void didUpdateWidget(covariant _MotionStage oldWidget) {
@@ -505,10 +512,8 @@ class _MotionStageState extends State<_MotionStage> {
 
   @override
   Widget build(BuildContext context) {
-    final cached = SignMediaService.instance.cachedMotion(widget.token.word);
     return FutureBuilder<SignMotion?>(
       future: _motion,
-      initialData: cached,
       builder: (context, snapshot) {
         final motion = snapshot.data;
         if (motion != null) {
@@ -524,7 +529,8 @@ class _MotionStageState extends State<_MotionStage> {
         if (snapshot.connectionState != ConnectionState.done) {
           return _Preparing(height: widget.height, word: widget.token.word);
         }
-        return _AvatarStage(token: widget.token, height: widget.height);
+        return _BodyFallback(
+            token: widget.token, height: widget.height, style: widget.style);
       },
     );
   }
@@ -556,6 +562,138 @@ class _Preparing extends StatelessWidget {
                   ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
         ]),
       ),
+    );
+  }
+}
+
+/// Phrase telle qu'elle est signée en LSF (ordre et expression du visage).
+class _GlossLine extends StatelessWidget {
+  final List<SignToken> tokens;
+  final int index;
+  final ValueChanged<int> onTap;
+
+  const _GlossLine(
+      {required this.tokens, required this.index, required this.onTap});
+
+  static String? _expressionLabel(SignToken token) =>
+      switch (token.expression) {
+        LsfExpression.questionYesNo =>
+          tr('Question : sourcils levés', 'Question: raised eyebrows'),
+        LsfExpression.questionWh =>
+          tr('Question : sourcils froncés', 'Question: furrowed brows'),
+        LsfExpression.negation =>
+          tr('Négation : la tête fait « non »', 'Negation: head shake'),
+        LsfExpression.neutral => null,
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final current = tokens[index];
+    final expression = _expressionLabel(current);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text.rich(
+          TextSpan(children: [
+            TextSpan(
+                text: '${tr('En LSF', 'In LSF')} : ',
+                style: theme.textTheme.labelMedium
+                    ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+            for (var i = 0; i < tokens.length; i++) ...[
+              if (i > 0) const TextSpan(text: ' '),
+              TextSpan(
+                text: tokens[i].isPointing
+                    ? '👉${tokens[i].word.toUpperCase()}'
+                    : tokens[i].word.toUpperCase(),
+                style: theme.textTheme.labelLarge?.copyWith(
+                  color: i == index
+                      ? theme.colorScheme.primary
+                      : theme.colorScheme.onSurface,
+                  fontWeight: i == index ? FontWeight.w800 : FontWeight.w500,
+                  decoration: i == index ? TextDecoration.underline : null,
+                ),
+              ),
+            ],
+          ]),
+          maxLines: 3,
+          overflow: TextOverflow.ellipsis,
+        ),
+        if (expression != null) ...[
+          const SizedBox(height: 4),
+          Row(children: [
+            Icon(Icons.face_retouching_natural_rounded,
+                size: 16, color: theme.colorScheme.secondary),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(expression,
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: theme.colorScheme.secondary)),
+            ),
+          ]),
+        ],
+      ],
+    );
+  }
+}
+
+/// Signe sans mouvement disponible (mot épelé, absent du serveur, serveur
+/// injoignable) : l'avatar reste affiché en entier, avec le geste décrit.
+class _BodyFallback extends StatelessWidget {
+  final SignToken token;
+  final double height;
+  final MotionStyle style;
+
+  const _BodyFallback(
+      {required this.token, required this.height, required this.style});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final media = SignMediaService.instance;
+    final reason = token.isFingerspelled
+        ? tr('Épelé en dactylologie', 'Fingerspelled')
+        : media.keys.isEmpty
+            ? tr('Serveur non joint : mouvement indisponible',
+                'Server not reached: movement unavailable')
+            : tr('Pas encore de vidéo pour ce signe',
+                'No video for this sign yet');
+    return FutureBuilder<MotionFrame>(
+      future: LsfMotionSynthesis.neutral(),
+      builder: (context, snapshot) {
+        final base = snapshot.data;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (base == null)
+              SizedBox(height: height)
+            else
+              SignMotionPlayer(
+                motion: LsfMotionSynthesis.idle(base),
+                style: style,
+                avatar: AppPreferences.instance.signingAvatar,
+                height: height,
+              ),
+            const SizedBox(height: 8),
+            Text.rich(
+              TextSpan(children: [
+                TextSpan(
+                    text: token.word.toUpperCase(),
+                    style: theme.textTheme.titleSmall),
+                if (_summary(token).isNotEmpty)
+                  TextSpan(
+                      text: ' — ${_summary(token)}',
+                      style: theme.textTheme.bodySmall),
+              ]),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            Text(reason,
+                style: theme.textTheme.labelSmall
+                    ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+          ],
+        );
+      },
     );
   }
 }

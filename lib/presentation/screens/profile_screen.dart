@@ -112,8 +112,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       .take(2)
                       .map((w) => w[0].toUpperCase())
                       .join(),
-                  style: theme.textTheme.titleLarge
-                      ?.copyWith(color: Colors.white),
+                  style:
+                      theme.textTheme.titleLarge?.copyWith(color: Colors.white),
                 ),
               ),
               const SizedBox(width: 16),

@@ -80,6 +80,8 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Préférences'));
       await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Texte affiché'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Texte affiché'));
       await tester.pumpAndSettle();
       expect(AppPreferences.instance.responseFormat, 'text');

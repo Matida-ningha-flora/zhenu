@@ -8,6 +8,7 @@ import '../../core/constants/app_colors.dart';
 import '../../core/l10n/tr.dart';
 import '../../core/preferences/app_preferences.dart';
 import '../../data/services/admin_data_service.dart';
+import '../../data/services/echosign_server.dart';
 import '../../data/services/sign_recognition_service.dart';
 import '../../data/services/translation_history_service.dart';
 import '../../data/services/voice_services.dart';
@@ -15,6 +16,7 @@ import '../widgets/lsf_explain_button.dart';
 import '../widgets/lsf_renderer.dart';
 import '../widgets/motion.dart';
 import '../widgets/reception_modes.dart';
+import '../widgets/server_settings.dart';
 import '../widgets/ui_kit.dart';
 import 'conversations/group_conversations.dart';
 
@@ -127,7 +129,7 @@ class CameraStage extends StatefulWidget {
 class _CameraStageState extends State<CameraStage> {
   String? _problemMessage(SignRecognitionService r) => switch (r.problem) {
         RecognitionProblem.server => tr(
-            'Serveur de reconnaissance injoignable. Vérifiez que le serveur tourne et que le téléphone est sur le même Wi-Fi.',
+            'Serveur introuvable sur ce Wi-Fi. Lancez le serveur sur le PC et connectez le téléphone au même réseau.',
             'Recognition server unreachable. Check that the server is running and that the phone is on the same Wi-Fi.'),
         RecognitionProblem.unsupported => tr(
             'La reconnaissance des signes fonctionne dans l’application Android.',
@@ -135,6 +137,9 @@ class _CameraStageState extends State<CameraStage> {
         RecognitionProblem.camera => tr(
             'Caméra inaccessible. Autorisez l’accès à la caméra dans les réglages.',
             'Camera unavailable. Allow camera access in the settings.'),
+        RecognitionProblem.landmarks => tr(
+            'L’analyse des images ne fonctionne pas sur ce téléphone${r.lastError == null ? '' : ' (${r.lastError})'}.',
+            'Image analysis does not work on this phone${r.lastError == null ? '' : ' (${r.lastError})'}.'),
         RecognitionProblem.none => null,
       };
 
@@ -150,17 +155,27 @@ class _CameraStageState extends State<CameraStage> {
         final (pillColor, pillLabel, pillDot) = switch (r.status) {
           RecognitionStatus.starting => (
               Colors.white.withValues(alpha: 0.25),
-              tr('Connexion…', 'Connecting…'),
+              r.searching
+                  ? tr('Recherche du serveur…', 'Finding the server…')
+                  : r.phase == 'camera'
+                      ? tr('Démarrage de l’analyse…', 'Starting analysis…')
+                      : tr('Connexion au modèle…', 'Connecting to the model…'),
               false
             ),
           RecognitionStatus.analysing || RecognitionStatus.recognized => r
                   .handsVisible
               ? (const Color(0xFFDC2626), tr('Signe en cours', 'Signing'), true)
-              : (
-                  Colors.black.withValues(alpha: 0.45),
-                  tr('Montrez vos mains', 'Show your hands'),
-                  false
-                ),
+              : r.predicting
+                  ? (
+                      AppColors.secondary,
+                      tr('Analyse du signe…', 'Analysing the sign…'),
+                      false
+                    )
+                  : (
+                      Colors.black.withValues(alpha: 0.45),
+                      tr('Montrez vos mains', 'Show your hands'),
+                      false
+                    ),
           _ => (
               Colors.black.withValues(alpha: 0.45),
               tr('Prêt', 'Ready'),
@@ -258,6 +273,21 @@ class _CameraStageState extends State<CameraStage> {
                     ),
                   ]),
                 ),
+                if (r.analysing && problem == null)
+                  Positioned(
+                    left: 12,
+                    top: 52,
+                    child: _OverlayPill(
+                      color: Colors.black.withValues(alpha: 0.45),
+                      label: r.framesAnalysed == 0
+                          ? (r.lastError == null
+                              ? tr('Préparation de l’analyse…',
+                                  'Preparing analysis…')
+                              : r.lastError!)
+                          : '${r.framesPerSecond.toStringAsFixed(1)} ${tr('img/s', 'fps')} · '
+                              '${r.handsVisible ? tr('mains vues', 'hands seen') : tr('pas de mains', 'no hands')}',
+                    ),
+                  ),
                 if (r.lastLabel != null && problem == null)
                   Positioned(
                     left: 16,
@@ -303,6 +333,18 @@ class _CameraStageState extends State<CameraStage> {
                             style: theme.textTheme.bodySmall
                                 ?.copyWith(color: Colors.white)),
                       ),
+                      if (r.problem == RecognitionProblem.server)
+                        TextButton(
+                          style: TextButton.styleFrom(
+                              foregroundColor: AppColors.secondary),
+                          onPressed: () async {
+                            final ok = await showServerSettings(context);
+                            if (ok == true || EchoSignServer.current != null) {
+                              await r.startAnalysis();
+                            }
+                          },
+                          child: Text(tr('Régler', 'Settings')),
+                        ),
                     ]),
                   ),
                 ),
